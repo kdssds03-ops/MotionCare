@@ -14,6 +14,8 @@ import ai.pleos.playground.vehicle.constant.area.SeatValue
 import ai.pleos.playground.vehicle.constant.area.TurnSignalValue
 import ai.pleos.playground.vehicle.constant.control.MoveControl
 import ai.pleos.playground.vehicle.constant.unit.TemperatureUnit
+import ai.pleos.playground.vehicle.constant.control.VehicleGear
+import ai.pleos.playground.vehicle.listener.GearSelectionListener
 import ai.pleos.playground.vehicle.listener.SteeringWheelAngleListener
 import ai.pleos.playground.vehicle.listener.TurnSignalStateListener
 import android.app.Activity
@@ -72,6 +74,8 @@ class MainActivity : Activity() {
     private var lastSpoken = ""
     private var problem: String? = null
     private var feedback: Int? = null
+    private var parked: Boolean? = null   // 기어 P 여부, 모르면 null
+    private var reclined = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,6 +95,8 @@ class MainActivity : Activity() {
         }, ::fail)
         vehicle.getTurnSignal().registerTurnSignalState(signalListener)
         vehicle.getSteeringWheel().registerSteeringWheelAngle(steerListener)
+        vehicle.getGear().getCurrentGearSelectionState({ gearListener.onSelected(it) }, ::fail)
+        vehicle.getGear().registerGearSelection(gearListener)
 
         tts = TextToSpeech(applicationContext, Mode.ON_DEVICE)
         tts.initialize(object : OnInitializeListener {
@@ -132,6 +138,15 @@ class MainActivity : Activity() {
     private val locationListener = object : FusedLocationListener {
         override fun onChanged(data: LocationData?) { data?.let { liveHeading = it.heading.toDouble() } }
         override fun onError(e: Exception) = fail(e)
+    }
+
+    private val gearListener = object : GearSelectionListener {
+        override fun onSelected(gear: VehicleGear?) {
+            parked = gear?.let { it == VehicleGear.GEAR_PARK }
+            if (parked == true && problem?.startsWith("주행 중") == true) problem = null
+            ui.post { render() }
+        }
+        override fun onFailed(e: Exception) = fail(e)
     }
 
     private val steerListener = object : SteeringWheelAngleListener {
@@ -210,13 +225,17 @@ class MainActivity : Activity() {
         render()
     }
 
-    /** 동승석 등받이 살짝 젖히기 (TUM 연구). 동승자가 버튼으로 직접 실행. */
+    /**
+     * 동승석 등받이 살짝 젖히기 (TUM 연구). 동승자가 버튼으로 직접 실행.
+     * Pleos는 P단이 아니면 시트 이동을 막음(오류 50001, 속도 0이어도 D면 거부) → P단에서만 시도.
+     */
     private fun recline() {
+        if (parked == false) { render(); return }
         val seat = vehicle.getSeat()
         val area = SeatArea(SeatValue.ROW_1_RIGHT)
-        seat.moveSeatBackrestAngle(area, MoveControl.BACKWARD, onFailed = ::fail)
+        seat.moveSeatBackrestAngle(area, MoveControl.BACKWARD,
+            onComplete = { _, _ -> reclined = true; ui.post { render() } }, onFailed = ::fail)
         ui.postDelayed({ seat.moveSeatBackrestAngle(area, MoveControl.STOP, onFailed = ::fail) }, RECLINE_MS)
-        reclineBtn.text = "젖혔어요"
     }
 
     /** 움직임 예고: 방향지시등이 켜지면 동승자에게 미리 알림 */
@@ -245,7 +264,7 @@ class MainActivity : Activity() {
         demo = if (withDemo) demoDrive(DT).iterator() else null
         tripOn = true; tripEnded = false
         airAt = null; airFan = null; turnAt = null; coachCount = 0; problem = null; feedback = null
-        reclineBtn.text = "젖히기"
+        reclined = false
         trace.clear()
         render()
     }
@@ -288,6 +307,7 @@ class MainActivity : Activity() {
     private lateinit var turnState: TextView
     private lateinit var coachState: TextView
     private lateinit var reclineBtn: TextView
+    private lateinit var reclineSub: TextView
     private lateinit var careFoot: TextView
     private lateinit var scoreV: TextView
     private lateinit var harshV: TextView
@@ -364,7 +384,8 @@ class MainActivity : Activity() {
             each(careRow("호흡 가이드", label(T.SMALL, T.MUTED, 400, "조명이 밝아지면 들숨, 어두워지면 날숨"), breathBtn))
             each(careRow("회전 예고", label(T.SMALL, T.MUTED, 400, "방향지시등이 켜지면 음성으로 알려요"), turnState))
             each(careRow("운전자 안내", label(T.SMALL, T.MUTED, 400, "급조작 시 30초에 한 번까지"), coachState))
-            each(careRow("등받이", label(T.SMALL, T.MUTED, 400, "동승석 등받이를 조금 젖혀요"), reclineBtn))
+            reclineSub = label(T.SMALL, T.MUTED)
+            each(careRow("등받이", reclineSub, reclineBtn))
             addView(careFoot.apply { setPadding(0, dp(12), 0, 0) })
         }
         // 1행이 창의 남는 높이를 모두 차지해서 바닥에 빈 띠가 생기지 않게
@@ -503,6 +524,12 @@ class MainActivity : Activity() {
         breathBtn.text = if (breathLeft > 0) "%d:%02d 남음".format(breathLeft / 60, breathLeft % 60) else "시작"
         turnState.text = turnAt?.let { (if (turnDir < 0) "왼쪽 · " else "오른쪽 · ") + ago(it) } ?: "—"
         coachState.text = if (started) "${coachCount}회" else "—"
+        // 등받이: P단이 아니면 버튼을 흐리게 하고 이유를 보여줌
+        val seatLocked = parked == false
+        reclineSub.text = if (seatLocked) "주행 중에는 시트를 움직일 수 없어요" else "동승석 등받이를 조금 젖혀요"
+        reclineBtn.text = when { reclined -> "젖혔어요"; seatLocked -> "P단에서 가능"; else -> "젖히기" }
+        reclineBtn.setTextColor(if (seatLocked && !reclined) T.FAINT else T.TEXT)
+        reclineBtn.background = fill(0, dp(999).toFloat(), dp(1), if (seatLocked) 0xFF2E3136.toInt() else 0xFF4A4E54.toInt())
         careFoot.text = problem?.let { "차량 응답: $it" } ?: if (lastSpoken.isEmpty()) "" else "마지막 음성 · $lastSpoken"
         careFoot.setTextColor(if (problem != null) T.NEG else T.FAINT)
 
@@ -542,6 +569,7 @@ class MainActivity : Activity() {
     private fun fail(e: Exception) {
         val m = e.message ?: "알 수 없는 오류"
         problem = when {
+            "50001" in m -> "주행 중(P단 아님)이라 등받이를 움직일 수 없어요"
             "HVAC_FAN_SPEED" in m -> "풍량을 지금 바꿀 수 없어요"
             "HVAC" in m -> "공조 설정 일부를 바꿀 수 없어요"
             "Permission" in m -> "권한이 없어 일부 제어를 못 했어요"
@@ -554,6 +582,7 @@ class MainActivity : Activity() {
         ui.removeCallbacksAndMessages(null)
         vehicle.getTurnSignal().unregisterTurnSignalState(signalListener)
         vehicle.getSteeringWheel().unregisterSteeringWheelAngle(steerListener)
+        vehicle.getGear().unregisterGearSelection(gearListener)
         if (location.isSupported()) location.unregisterFusedLocationCallback(locationListener)
         vehicle.release()
         location.release()
