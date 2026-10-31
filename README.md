@@ -29,4 +29,8 @@
 | 음성 안내 | TextToSpeech (ON_DEVICE) |
 
 ## APK
-`apk/팀명_멀미케어_release.apk` (제출 전 추가)
+[`apk/MotionCare_멀미케어_release.apk`](apk/MotionCare_멀미케어_release.apk) — v3 서명(키 교체 지원), Pleos Connect Emulator 2.1.0에서 실행 확인
+
+설치: `adb install -g apk/MotionCare_멀미케어_release.apk` (`-g`로 차량·위치 권한을 함께 허용)
+
+직접 release 빌드하려면 프로젝트 루트에 `keystore.properties`(storeFile, storePassword, keyAlias, keyPassword)를 두고 `./gradlew assembleRelease`. 서명 키는 저장소에 포함되지 않습니다.

@@ -5,3 +5,5 @@ local.properties
 *.iml
 .taste-skill/
 .DS_Store
+keystore/
+keystore.properties
