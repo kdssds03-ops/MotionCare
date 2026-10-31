@@ -562,6 +562,7 @@ class MainActivity : Activity() {
     }
 
     private fun say(text: String) {
+        android.util.Log.i("MotionCare", "say: $text")   // 시연 영상 음성 동기화용
         lastSpoken = text
         if (ttsReady) tts.speak(text, true)
     }
