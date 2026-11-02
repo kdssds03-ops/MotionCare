@@ -253,3 +253,32 @@ class MarkView(c: Context) : View(c) {
         cv.drawPath(path, p)
     }
 }
+
+/** 최근 주행 점수 막대(0~100, 오래된 것 → 최신) + 멀미 피드백 점(0~10). 데모 주행은 옅게. */
+class TrendView(c: Context, private val trips: List<Trip>) : View(c) {
+    private val d = c.resources.displayMetrics.density
+    private val sp = c.resources.displayMetrics.scaledDensity
+    private val bar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.DATA }
+    private val demoBar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = blend(T.DATA, T.SURFACE, 0.6f) }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.WARN }
+    private val base = Paint().apply { color = T.RULE; strokeWidth = d }
+    private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.MUTED; textSize = T.SMALL * sp; textAlign = Paint.Align.CENTER; fontFeatureSettings = "tnum" }
+
+    init { minimumHeight = (220 * d).toInt() }
+
+    override fun onDraw(cv: Canvas) {
+        val top = 30 * d; val bottom = height - 30 * d
+        cv.drawLine(0f, bottom, width.toFloat(), bottom, base)
+        if (trips.isEmpty()) { cv.drawText("아직 기록이 없어요", width / 2f, (top + bottom) / 2, txt); return }
+        val slot = width / 10f
+        val bw = minOf(slot * 0.5f, 48 * d)
+        trips.forEachIndexed { i, t ->
+            val cx = slot * i + slot / 2
+            val y = bottom - (bottom - top) * t.score.coerceIn(0, 100) / 100f
+            cv.drawRoundRect(cx - bw / 2, y, cx + bw / 2, bottom, 6 * d, 6 * d, if (t.demo) demoBar else bar)
+            cv.drawText("${t.score}", cx, y - 8 * d, txt)
+            t.misc?.let { m -> cv.drawCircle(cx, bottom - (bottom - top) * m / 10f, 7 * d, dot) }
+            cv.drawText(if (t.demo) "데모" else "${i + 1}", cx, bottom + 24 * d, txt)
+        }
+    }
+}

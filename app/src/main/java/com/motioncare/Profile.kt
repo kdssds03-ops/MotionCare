@@ -59,6 +59,23 @@ fun Profile.learn(trip: Trip): Profile {
 /** 다시 켜면 기록을 처음부터 쌓는다. 그래야 바로 다시 꺼지지 않는다. */
 fun Profile.enableCare(c: Care): Profile = copy(cares = cares + (c to CareStat()))
 
+/** 사용자가 직접 끔. 기록은 그대로 둔다. */
+fun Profile.disableCare(c: Care): Profile = copy(cares = cares + (c to (cares[c] ?: CareStat()).copy(off = true)))
+
+fun careName(c: Care) = when (c) { Care.AIR -> "공기 케어"; Care.BREATH -> "호흡 가이드"; Care.TURN_CUE -> "회전 예고"; Care.RECLINE -> "등받이" }
+
+/** 리포트의 학습 결과 한 줄: 경고 시점 변화 + 새로 꺼진 케어 */
+fun learningLine(before: Profile, after: Profile): String {
+    val d = after.earlierPercent() - before.earlierPercent()
+    val timing = when {
+        d > 0 -> "다음부터 경고가 $d% 일찍 와요"
+        d < 0 -> "다음부터 경고가 ${-d}% 늦게 와요"
+        else -> "경고 시점은 그대로예요"
+    }
+    val off = Care.entries.filter { after.cares[it]?.off == true && before.cares[it]?.off != true }
+    return if (off.isEmpty()) timing else "$timing · 효과가 적었던 ${off.joinToString(", ") { careName(it) }}는 꺼 둘게요"
+}
+
 fun learnTemp(observedC: Float): Float = observedC.coerceIn(18f, 26f)
 
 /** 기본 대비 몇 % 일찍 경고하는지 (음수면 늦게) */

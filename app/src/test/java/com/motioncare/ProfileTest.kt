@@ -101,4 +101,23 @@ class ProfileTest {
         assertEquals(20, base.copy(sensitivity = 1.2).earlierPercent())
         assertEquals(-10, base.copy(sensitivity = 0.9).earlierPercent())
     }
+
+    @Test fun learningLineSaysEarlierOrLater() {
+        val p = Profile("a", "지우", Seat.FRONT_RIGHT, 1.0)
+        assertEquals("다음부터 경고가 10% 일찍 와요", learningLine(p, p.copy(sensitivity = 1.1)))
+        assertEquals("다음부터 경고가 10% 늦게 와요", learningLine(p, p.copy(sensitivity = 0.9)))
+        assertEquals("경고 시점은 그대로예요", learningLine(p, p))
+    }
+
+    @Test fun learningLineMentionsCareTurnedOff() {
+        val p = Profile("a", "지우", Seat.FRONT_RIGHT, 1.0, cares = mapOf(Care.BREATH to CareStat(2, 0)))
+        val after = p.copy(cares = mapOf(Care.BREATH to CareStat(3, 0, off = true)))
+        assertEquals("경고 시점은 그대로예요 · 효과가 적었던 호흡 가이드는 꺼 둘게요", learningLine(p, after))
+    }
+
+    @Test fun disableCareKeepsStats() {
+        val p = Profile("a", "지우", Seat.FRONT_RIGHT, 1.0, cares = mapOf(Care.AIR to CareStat(4, 3)))
+        assertEquals(CareStat(4, 3, off = true), p.disableCare(Care.AIR).cares[Care.AIR])
+        assertEquals(CareStat(0, 0, off = true), p.disableCare(Care.RECLINE).cares[Care.RECLINE])
+    }
 }

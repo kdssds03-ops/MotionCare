@@ -81,6 +81,8 @@ class MainActivity : Activity() {
     private var demo: Iterator<DemoTick>? = null
     private var tripOn = false
     private var tripEnded = false
+    private var tripStartMs = 0L
+    private var report: ReportState? = null
     private var lastSignal = 0
     private var lastCoachMs = 0L
 
@@ -100,7 +102,6 @@ class MainActivity : Activity() {
     private var coachCount = 0
     private var lastSpoken = ""
     private var problem: String? = null
-    private var feedback: Int? = null
     private var parked: Boolean? = null   // 기어 P 여부, 모르면 null
     private var reclined = false
     private var reclineAreas: List<SeatArea>? = null   // 등받이를 움직일 수 있는 좌석, 모르면 null
@@ -126,6 +127,7 @@ class MainActivity : Activity() {
     val caresThisTrip = mutableSetOf<Care>()
     private val sentTemp = HashMap<SeatArea, Float>()   // 앱이 마지막으로 보낸 좌석별 온도
     private val tempListeners = HashMap<SeatArea, HvacTemperatureListener>()
+    private var tempSentAtMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,7 +142,9 @@ class MainActivity : Activity() {
         hvac.checkHvacFanSpeedCapabilities({ _, map -> fanMax = map.mapValues { it.value.maxValue } }, ::fail)
         hvac.checkHvacTemperatureCapabilities({ _, map: Map<SeatArea, AreaBounds<Float>> ->
             tempRange = map.mapValues { it.value.minValue..it.value.maxValue }
-            tempRange.keys.forEach { a -> hvac.registerHvacTemperature(a, tempListeners.getOrPut(a) { tempListener(a) }) }
+            tempRange.keys.filter { it !in tempListeners }.forEach { a ->
+                tempListeners[a] = tempListener(a).also { hvac.registerHvacTemperature(a, it) }
+            }
         }, ::fail)
         vehicle.getSeat().checkMoveSeatBackrestAngleCapabilities({ _, list -> reclineAreas = list; ui.post { render() } }, { reclineAreas = null })
         vehicle.getLight().checkAmbientLightBrightnessCapabilities({ _, map ->
@@ -173,43 +177,83 @@ class MainActivity : Activity() {
     fun show(s: Screen) {
         screen = s
         setContentView(when (s) {
-            Screen.RiderSelect -> riderSelect(
-                profiles.sortedByDescending { p -> p.trips.firstOrNull()?.startMs ?: 0L }, columns(),
-                onPick = ::pickRider, onDetail = { show(Screen.ProfileDetail(it.id)) },
-                onGuest = { pickRider(null) }, onNew = { show(Screen.CreateProfile) })
+            Screen.RiderSelect -> riderSelectView()
             Screen.CreateProfile -> createProfile(draft, keyboardAllowed,
-                onChange = { show(Screen.CreateProfile) }, onSave = ::saveDraft, onCancel = { show(Screen.RiderSelect) })
-            // ponytail: 리포트·상세 화면은 Task 8에서 채움. 지금은 주행 화면 아래 카드가 리포트 역할.
-            Screen.Drive, Screen.Report -> buildUi()
-            is Screen.ProfileDetail -> page(profiles.firstOrNull { it.id == s.id }?.name ?: "프로필", "기록과 설정은 곧 볼 수 있어요",
-                { show(Screen.RiderSelect) }, View(this))
+                onChange = { show(Screen.CreateProfile) }, onSave = ::saveDraft,
+                onCancel = { show(if (draft.trip != null) Screen.Report else Screen.RiderSelect) })
+            Screen.Drive -> buildUi()
+            Screen.Report -> report?.let { r ->
+                report(r, rider, columns() > 1, keyboardAllowed, onChange = { show(Screen.Report) }, onDone = ::finishReport,
+                    onSaveGuest = { draft.trip = r.final(); show(Screen.CreateProfile) })
+            } ?: buildUi().also { screen = Screen.Drive }
+            is Screen.ProfileDetail -> profiles.firstOrNull { it.id == s.id }?.let { p ->
+                profileDetail(p, columns() > 1,
+                    onBack = { show(Screen.RiderSelect) }, onStart = { pickRider(p) },
+                    onToggle = { c, on -> updateProfile(p.id) { if (on) it.enableCare(c) else it.disableCare(c) }; show(s) },
+                    onTemp = { t -> updateProfile(p.id) { it.copy(careTempC = learnTemp(t)) }; show(s) },
+                    onDelete = { confirmDelete(p) })
+            } ?: riderSelectView().also { screen = Screen.RiderSelect }
         })
         render()
+    }
+
+    private fun riderSelectView() = riderSelect(
+        profiles.sortedByDescending { p -> p.trips.firstOrNull()?.startMs ?: 0L }, columns(),
+        onPick = ::pickRider, onDetail = { show(Screen.ProfileDetail(it.id)) },
+        onGuest = { pickRider(null) }, onNew = { draft.trip = null; show(Screen.CreateProfile) })
+
+    private fun confirmDelete(p: Profile) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("${p.name} 프로필을 삭제할까요?")
+            .setMessage("주행 기록 ${p.trips.size}회와 학습한 설정이 함께 지워져요.")
+            .setNegativeButton("취소", null)
+            .setPositiveButton("삭제") { _, _ ->
+                profiles = profiles.filter { it.id != p.id }
+                store.save(profiles)
+                if (rider?.id == p.id) rider = null
+                show(Screen.RiderSelect)
+            }
+            .show()
+    }
+
+    /** 리포트 [완료]: 프로필이면 학습해서 저장, 게스트면 민감도만 이번 실행 동안 반영 */
+    private fun finishReport() {
+        val r = report ?: return show(Screen.Drive)
+        val t = r.final()
+        if (rider != null) updateRider { it.learn(t) }
+        else t.misc?.let { comfort.feedback(it) }
+        report = null; tripEnded = false
+        comfort = Comfort(rider?.sensitivity ?: comfort.sensitivity)
+        resetTripState()
+        show(Screen.Drive)
     }
 
     private fun pickRider(p: Profile?) {
         rider = p
         comfort = Comfort(p?.sensitivity ?: 1.0)
-        risk = Risk.LOW; tripEnded = false; feedback = null
-        trace.clear()
+        tripEnded = false
+        resetTripState()
         show(Screen.Drive)
     }
 
     private fun saveDraft() {
         if (!draft.valid || !keyboardAllowed) { show(Screen.CreateProfile); return }
-        val p = Profile(java.util.UUID.randomUUID().toString(), draft.name.take(10), draft.seat!!, surveySensitivity(draft.answers.toList()))
+        val fresh = Profile(java.util.UUID.randomUUID().toString(), draft.name.take(10), draft.seat!!, surveySensitivity(draft.answers.toList()))
+        val trip = draft.trip
+        val p = trip?.let { fresh.learn(it) } ?: fresh   // 게스트 주행을 저장하면 첫 기록이 됨
         profiles = profiles + p
         store.save(profiles)
-        draft.name = ""; draft.seat = null; draft.answers.fill(-1)
+        draft.name = ""; draft.seat = null; draft.answers.fill(-1); draft.trip = null
+        if (trip != null) { report = null; tripEnded = false }
         pickRider(p)
     }
 
     /** 게스트는 저장하지 않음. 프로필이면 목록에 반영하고 파일에 저장. */
-    private fun updateRider(f: (Profile) -> Profile) {
-        val p = rider ?: return
-        val n = f(p)
-        rider = n
-        profiles = profiles.map { if (it.id == n.id) n else it }
+    private fun updateRider(f: (Profile) -> Profile) { rider?.let { updateProfile(it.id, f) } }
+
+    private fun updateProfile(id: String, f: (Profile) -> Profile) {
+        profiles = profiles.map { if (it.id == id) f(it) else it }
+        if (rider?.id == id) rider = profiles.first { it.id == id }
         store.save(profiles)
     }
 
@@ -218,7 +262,8 @@ class MainActivity : Activity() {
         when (screen) {
             Screen.RiderSelect -> super.onBackPressed()
             // 주행 중에는 화면만 내리고 주행은 계속 (닫으면 기록이 사라짐)
-            Screen.Drive, Screen.Report -> if (tripOn) moveTaskToBack(true) else show(Screen.RiderSelect)
+            Screen.Drive -> if (tripOn) moveTaskToBack(true) else show(Screen.RiderSelect)
+            Screen.Report -> finishReport()
             else -> show(Screen.RiderSelect)
         }
     }
@@ -303,7 +348,11 @@ class MainActivity : Activity() {
     private fun tempListener(a: SeatArea) = object : HvacTemperatureListener {
         override fun onHvacTemperatureUpdated(v: Float?) {
             if (v == null || a != careTempArea()) return
-            ui.post { if (isUserTemp(sentTemp[a], v)) { sentTemp[a] = v; updateRider { it.copy(careTempC = learnTemp(v)) } } }
+            ui.post {
+                // 공기 케어 뒤 10분 안의 변경만: 그 밖의 변경(자동 공조, 다른 앱)은 선호로 보지 않음
+                val recent = System.currentTimeMillis() - tempSentAtMs < TEMP_LEARN_MS
+                if (recent && isUserTemp(sentTemp[a], v)) { sentTemp[a] = v; updateRider { it.copy(careTempC = learnTemp(v)) } }
+            }
         }
         override fun onFailed(e: Exception) {}
     }
@@ -381,7 +430,7 @@ class MainActivity : Activity() {
             tempRange.entries.forEachIndexed { i, (a, r) ->
                 val t = careTemp().coerceIn(r)
                 ui.postDelayed({
-                    sentTemp[a] = t
+                    sentTemp[a] = t; tempSentAtMs = System.currentTimeMillis()
                     hvac.setHvacTemperature(a, t, TemperatureUnit.CELSIUS, onFailed = ::fail)
                 }, i * TEMP_GAP_MS)
             }
@@ -555,27 +604,29 @@ class MainActivity : Activity() {
         risk = Risk.LOW
         demo = if (withDemo) demoDrive(DT).iterator() else null
         tripOn = true; tripEnded = false
-        airAt = null; airFan = null; turnAt = null; coachCount = 0; problem = null; feedback = null
-        reclined = false
-        caresThisTrip.clear(); offer = null; assistNote = null; highSinceS = null; autoOffered = false; lastTbtKey = null
-        trace.clear()
+        tripStartMs = System.currentTimeMillis()
+        resetTripState()
         render()
+    }
+
+    /** 주행마다 새로 시작하는 케어·안내 상태 (주행 시작, 리포트 완료, 탑승자 변경 때) */
+    private fun resetTripState() {
+        airAt = null; airFan = null; turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
+        caresThisTrip.clear(); offer = null; pendingRest = null; assistNote = null
+        highSinceS = null; autoOffered = false; lastTbtKey = null
+        risk = Risk.LOW
+        trace.clear()
     }
 
     private fun endTrip() {
         if (!tripOn) return
         tripOn = false; tripEnded = true
+        val trip = Trip(tripStartMs, (comfort.durationS / 60).roundToInt(), comfort.score(), comfort.maxRisk,
+            null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
         demo = null
-        say("주행이 끝났어요. 편안함 점수는 ${comfort.score()}점이에요.")
-        render()
-    }
-
-    private fun onMisc(m: Int) {
-        if (!tripEnded) return
-        comfort.feedback(m)
-        feedback = m
-        updateRider { it.copy(sensitivity = comfort.sensitivity) }
-        render()
+        report = ReportState(trip, comfort.harshEvents)
+        say("주행이 끝났어요. 편안함 점수는 ${comfort.score()}점이에요. 멀미는 어땠는지 알려주세요.")
+        show(Screen.Report)
     }
 
     private fun setSensitivity(s: Double) {
@@ -608,11 +659,8 @@ class MainActivity : Activity() {
     private lateinit var harshV: TextView
     private lateinit var maxV: TextView
     private lateinit var timeV: TextView
-    private lateinit var taxiV: TextView
-    private lateinit var taxiPill: TextView
     private val sensBtns = ArrayList<Pair<Double, TextView>>()
-    private val miscBtns = ArrayList<TextView>()
-    private lateinit var miscNote: TextView
+    private lateinit var riderNote: TextView
     private lateinit var titleV: TextView
     private lateinit var reclineRow: View
     private lateinit var micBtn: LinearLayout
@@ -621,7 +669,7 @@ class MainActivity : Activity() {
     private lateinit var noteV: TextView
 
     private fun buildUi(): View {
-        sensBtns.clear(); miscBtns.clear()
+        sensBtns.clear()
         (trace.parent as? android.view.ViewGroup)?.removeView(trace)
         val g = dp(T.GAP)
         val root = LinearLayout(this).apply {
@@ -706,7 +754,6 @@ class MainActivity : Activity() {
         // 2행: 이번 주행(2/3) | 탑승자(1/3)
         scoreV = label(T.KPI, T.TEXT, 500); harshV = label(T.KPI, T.TEXT, 500)
         maxV = label(T.KPI, T.TEXT, 500); timeV = label(T.KPI, T.TEXT, 500)
-        taxiV = label(T.BODY, T.TEXT); taxiPill = pill("", 0, 0)
         val tripCard = card().apply {
             addView(label(T.SECTION, T.TEXT, 500, "이번 주행"))
             addView(LinearLayout(context).apply {
@@ -720,49 +767,28 @@ class MainActivity : Activity() {
                         }, LinearLayout.LayoutParams(0, -2, 1f))
                     }
             })
-            addView(View(context).apply { setBackgroundColor(T.RULE) }, LinearLayout.LayoutParams(-1, dp(1)))
-            addView(LinearLayout(context).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(16), 0, 0)
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(label(T.SMALL, T.MUTED, 400, "택시 플랫폼 전송 미리보기"))
-                    addView(taxiV)
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(taxiPill)
-            })
+            addView(label(T.SMALL, T.MUTED, 400, "주행이 끝나면 리포트에서 멀미를 묻고 다음 주행에 반영해요"))
         }
 
-        miscNote = label(T.SMALL, T.FAINT)
+        riderNote = label(T.SMALL, T.MUTED)
         val sensRow = LinearLayout(this).apply {
             background = fill(T.RAISED, dp(999).toFloat())
             setPadding(dp(4), dp(4), dp(4), dp(4))
-            listOf(0.8 to "낮음", 1.0 to "보통", 1.3 to "높음").forEach { (v, name) ->
+            SENS.forEach { (v, name) ->
                 val b = label(T.BODY, T.TEXT, 500, name).apply {
-                    gravity = Gravity.CENTER; minHeight = dp(44)
+                    gravity = Gravity.CENTER; minHeight = dp(T.TOUCH)
                     setOnClickListener { setSensitivity(v) }
                 }
                 sensBtns += v to b
                 addView(b, LinearLayout.LayoutParams(0, -2, 1f))
             }
         }
-        val miscRow = LinearLayout(this).apply {
-            for (m in 0..10) {
-                val b = label(T.BODY, T.TEXT, 500, "$m").apply {
-                    gravity = Gravity.CENTER
-                    setOnClickListener { onMisc(m) }
-                }
-                miscBtns += b
-                addView(b, LinearLayout.LayoutParams(0, dp(44), 1f).apply { if (m > 0) marginStart = dp(4) })
-            }
-        }
         val riderCard = card().apply {
-            addView(label(T.SECTION, T.TEXT, 500, "탑승자"))
+            addView(label(T.SECTION, T.TEXT, 500, rider?.name ?: "게스트"))
             addView(label(T.SMALL, T.MUTED, 400, "멀미 민감도").apply { setPadding(0, dp(14), 0, dp(8)) })
             addView(sensRow)
-            addView(label(T.SMALL, T.MUTED, 400, "이번 주행 멀미는 어땠나요? (0 괜찮음 · 10 토할 것 같음)").apply { setPadding(0, dp(18), 0, dp(8)) })
-            addView(miscRow)
-            addView(miscNote.apply { setPadding(0, dp(10), 0, 0) })
+            addView(riderNote.apply { setPadding(0, dp(12), 0, 0) })
+            rider?.let { p -> addView(button("기록 · 설정") { show(Screen.ProfileDetail(p.id)) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }) }
         }
         root.addView(pair(tripCard, riderCard, wide), LinearLayout.LayoutParams(-1, -2).apply { topMargin = g })
 
@@ -832,13 +858,13 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
-    private fun ago(s: Double) = (comfort.durationS - s).toInt().let { "%d:%02d 전".format(it / 60, it % 60) }
+    private fun ago(s: Double) = (comfort.durationS - s).toInt().coerceAtLeast(0).let { "%d:%02d 전".format(it / 60, it % 60) }
 
     private fun render() {
-        if (screen != Screen.Drive && screen != Screen.Report) return
+        if (screen != Screen.Drive) return
         val idx = comfort.windowMsdv * comfort.sensitivity
         val started = tripOn || tripEnded
-        val sensName = when { comfort.sensitivity < 0.9 -> "낮음"; comfort.sensitivity > 1.15 -> "높음"; else -> "보통" }
+        val sensName = SENS.minBy { abs(it.first - comfort.sensitivity) }.second
         scope.text = (rider?.let { "${it.name} · ${seatName(it.seat)}" } ?: "게스트 · 기록 안 남김") + " · 민감도 $sensName"
         backBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
         val seat = rider?.seat ?: Seat.FRONT_RIGHT
@@ -901,27 +927,20 @@ class MainActivity : Activity() {
         maxV.text = if (started) when (comfort.maxRisk) { Risk.HIGH -> "위험"; Risk.CAUTION -> "주의"; else -> "편안" } else "—"
         val sec = comfort.durationS.toInt()
         timeV.text = if (started) "%d:%02d".format(sec / 60, sec % 60) else "—"
-        taxiV.text = if (tripEnded) "점수 ${comfort.score()} · 급조작 ${comfort.harshEvents}회 · 최고 ${maxV.text} · ${sec / 60}분" else "주행이 끝나면 만들어져요"
-        val (tText, tBg, tInk) = if (tripEnded) Triple("전송 준비됨", T.POS_BG, T.POS) else Triple("주행 중", T.RAISED, T.MUTED)
-        taxiPill.text = tText; taxiPill.setTextColor(tInk); taxiPill.background = fill(tBg, dp(999).toFloat())
-        taxiPill.visibility = if (started) View.VISIBLE else View.INVISIBLE
 
+        // 학습으로 0.9처럼 중간 값이 되면 가장 가까운 단계 하나만 표시
+        val nearest = sensBtns.minByOrNull { abs(it.first - comfort.sensitivity) }?.first
         sensBtns.forEach { (v, b) ->
-            val on = abs(v - comfort.sensitivity) < 0.12
+            val on = v == nearest
             b.setTextColor(if (on) T.p.primaryText else T.MUTED)
             b.background = if (on) fill(T.p.primaryBg, dp(999).toFloat()) else null
         }
-        miscBtns.forEachIndexed { m, b ->
-            val on = feedback == m
-            b.isEnabled = tripEnded
-            b.setTextColor(when { on -> T.p.primaryText; tripEnded -> T.TEXT; else -> T.FAINT })
-            b.background = fill(if (on) T.p.primaryBg else T.RAISED, dp(999).toFloat())
-        }
-        miscNote.text = when {
-            feedback != null -> "반영했어요 · 다음 주행부터 민감도 %.2f".format(comfort.sensitivity)
-            tripEnded -> "알려주시면 다음 주행부터 경고 시점을 맞춰요"
-            else -> "주행이 끝나면 물어볼게요"
-        }
+        riderNote.text = rider?.let { p ->
+            val e = p.earlierPercent()
+            val recent = p.trips.take(5)
+            (when { e > 0 -> "경고 $e% 일찍"; e < 0 -> "경고 ${-e}% 늦게"; else -> "경고 시점 기본" }) +
+                (if (recent.isEmpty()) " · 첫 주행" else " · 최근 ${recent.size}회 평균 ${recent.map { it.score }.average().roundToInt()}점")
+        } ?: "게스트는 기록을 남기지 않아요"
     }
 
     private fun say(text: String) {
@@ -963,9 +982,11 @@ class MainActivity : Activity() {
         const val DT = 0.5
         const val CARE_TEMP_C = 21f
         const val TEMP_GAP_MS = 300L
+        val SENS = listOf(0.8 to "낮음", 1.0 to "보통", 1.3 to "높음")   // 설문 결과와 같은 세 단계
         const val HIGH_OFFER_S = 180.0      // 위험 단계가 이만큼 이어지면 휴게소 제안
         const val SICK_ASK_DELAY_MS = 6000L // 즉시 케어 안내가 끝난 뒤 휴게소 질문
         const val STT_TIMEOUT_MS = 8000L
+        const val TEMP_LEARN_MS = 10 * 60_000L   // 공기 케어 뒤 이 시간 안에 바꾼 온도만 선호로 기억
         const val RECLINE_MS = 1000L   // 등받이 젖히는 시간. 실차에서 몇 도 움직이는지 보고 조정.
     }
 }

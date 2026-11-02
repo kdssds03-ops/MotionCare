@@ -106,7 +106,7 @@ fun Context.riderSelect(
 }
 
 /** 프로필 만들기 입력값 (화면을 다시 그려도 유지) */
-class Draft(var name: String = "", var seat: Seat? = null, val answers: IntArray = intArrayOf(-1, -1, -1)) {
+class Draft(var name: String = "", var seat: Seat? = null, val answers: IntArray = intArrayOf(-1, -1, -1), var trip: Trip? = null) {
     val valid get() = name.isNotBlank() && seat != null && answers.all { it >= 0 }
 }
 
@@ -161,7 +161,8 @@ fun Context.createProfile(d: Draft, keyboardAllowed: Boolean, onChange: () -> Un
             addView(save, LinearLayout.LayoutParams(0, -2, 2f).apply { marginStart = dp(T.GAP) })
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP * 2) })
     }
-    return page("새 프로필", "한 번만 입력하면 다음부터는 이름만 누르면 돼요", onCancel, body)
+    val sub = if (d.trip != null) "방금 주행을 첫 기록으로 저장해요" else "한 번만 입력하면 다음부터는 이름만 누르면 돼요"
+    return page("새 프로필", sub, onCancel, body)
 }
 
 // ponytail: 저장 버튼 활성 상태를 글자 입력마다 갱신하려고 둔 전역 콜백. 화면이 하나뿐이라 충분.
@@ -173,3 +174,152 @@ fun Context.chipRow(chips: List<View>) = LinearLayout(this).apply {
 }
 
 fun TextView.muted() = apply { setTextColor(T.MUTED) }
+
+// --- 주행 리포트 ---
+
+/** 리포트에서 고르는 값 (화면을 다시 그려도 유지) */
+class ReportState(val trip: Trip, val harsh: Int, var misc: Int? = null, val helped: MutableSet<Care> = mutableSetOf()) {
+    fun final() = trip.copy(misc = misc, helped = helped.toSet())
+}
+
+fun riskName(r: Risk) = when (r) { Risk.HIGH -> "위험"; Risk.CAUTION -> "주의"; else -> "편안" }
+
+/** 넓으면 a:b 가로, 좁으면 위아래 */
+fun Context.columnsOf(a: View, b: View, wide: Boolean, wa: Float = 1f, wb: Float = 1f) = LinearLayout(this).apply {
+    orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+    if (wide) {
+        addView(a, LinearLayout.LayoutParams(0, -2, wa))
+        addView(b, LinearLayout.LayoutParams(0, -2, wb).apply { marginStart = dp(T.GAP) })
+    } else {
+        addView(a, LinearLayout.LayoutParams(-1, -2))
+        addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) })
+    }
+}
+
+fun Context.stack(vararg v: View) = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    v.forEachIndexed { i, c -> addView(c, LinearLayout.LayoutParams(-1, -2).apply { if (i > 0) topMargin = dp(T.GAP) }) }
+}
+
+fun Context.kpi(name: String, value: String) = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    addView(label(T.SMALL, T.MUTED, 500, name))
+    addView(label(T.KPI, T.TEXT, 600, value).apply { setPadding(0, dp(4), 0, 0) })
+}
+
+fun Context.report(
+    r: ReportState, rider: Profile?, wide: Boolean, canSaveGuest: Boolean,
+    onChange: () -> Unit, onDone: () -> Unit, onSaveGuest: () -> Unit,
+): View {
+    val t = r.trip
+    val summary = card().apply {
+        addView(label(T.SECTION, T.TEXT, 600, "이번 주행"))
+        addView(LinearLayout(context).apply {
+            setPadding(0, dp(T.GAP), 0, 0)
+            listOf("편안함 점수" to "${t.score}", "가장 높았던 단계" to riskName(t.maxRisk), "급조작" to "${r.harsh}회", "주행 시간" to "${t.minutes}분")
+                .forEach { (n, v) -> addView(kpi(n, v), LinearLayout.LayoutParams(0, -2, 1f)) }
+        })
+    }
+    val taxi = card().apply {
+        addView(label(T.SMALL, T.MUTED, 500, "택시 플랫폼 전송 미리보기"))
+        addView(LinearLayout(context).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+            addView(label(T.BODY, T.TEXT, 500, "점수 ${t.score} · 급조작 ${r.harsh}회 · 최고 ${riskName(t.maxRisk)} · ${t.minutes}분"), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(pill("전송 준비됨", T.POS_BG, T.POS))
+        })
+    }
+    val feedback = card().apply {
+        addView(label(T.SECTION, T.TEXT, 600, "멀미는 어땠나요?"))
+        addView(label(T.SMALL, T.MUTED, 500, "0 괜찮음 · 10 토할 것 같음 · 알려주시면 다음 경고 시점을 맞춰요").apply { setPadding(0, dp(4), 0, 0) })
+        addView(LinearLayout(context).apply {
+            setPadding(0, dp(12), 0, 0)
+            for (m in 0..10) addView(chip("$m", r.misc == m) { r.misc = m; onChange() }.apply { setPadding(0, 0, 0, 0) },
+                LinearLayout.LayoutParams(0, -2, 1f).apply { if (m > 0) marginStart = dp(6) })
+        })
+        if (t.cares.isNotEmpty()) {
+            addView(label(T.BODY, T.TEXT, 500, "도움이 된 케어 (선택)").apply { setPadding(0, dp(20), 0, 0) })
+            addView(chipRow(Care.entries.filter { it in t.cares }.map { c ->
+                chip(careName(c), c in r.helped) { if (!r.helped.remove(c)) r.helped += c; onChange() }
+            }))
+        }
+    }
+    val learn = card().apply {
+        addView(label(T.SECTION, T.TEXT, 600, if (rider != null) "${rider.name}님 학습" else "게스트 주행"))
+        val line = rider?.let { learningLine(it, it.learn(r.final())) } ?: "게스트는 기록을 남기지 않아요 · 프로필로 저장하면 다음부터 맞춰 드려요"
+        addView(label(T.BODY, T.TEXT, 400, line).apply { setPadding(0, dp(8), 0, 0) })
+    }
+    val actions = LinearLayout(this).apply {
+        gravity = Gravity.END
+        if (rider == null && canSaveGuest) addView(button("프로필로 저장", icon = R.drawable.ic_person) { onSaveGuest() },
+            LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(T.GAP) })
+        addView(button(if (rider != null) "저장하고 완료" else "완료", primary = true, icon = R.drawable.ic_check) { onDone() })
+    }
+    val sub = "${seatName(rider?.seat ?: Seat.FRONT_RIGHT)} · ${t.minutes}분" + if (t.demo) " · 데모 주행" else ""
+    return page("주행 리포트", sub, null, stack(columnsOf(stack(summary, taxi), stack(feedback, learn), wide), actions))
+}
+
+// --- 프로필 상세 ---
+
+fun Context.profileDetail(
+    p: Profile, wide: Boolean,
+    onBack: () -> Unit, onStart: () -> Unit, onToggle: (Care, Boolean) -> Unit, onTemp: (Float) -> Unit, onDelete: () -> Unit,
+): View {
+    val trend = card().apply {
+        addView(LinearLayout(context).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(label(T.SECTION, T.TEXT, 600, "최근 10회 편안함 점수"), LinearLayout.LayoutParams(0, -2, 1f))
+            // 범례: 색 견본은 크기를 정해 줘야 함 (wrap_content View는 남는 높이를 다 차지)
+            listOf(Triple(T.DATA, 4, "점수"), Triple(T.WARN, 8, "멀미 0~10")).forEach { (color, r, name) ->
+                addView(View(context).apply { background = fill(color, dp(r).toFloat()) },
+                    LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(T.GAP); marginEnd = dp(8) })
+                addView(label(T.SMALL, T.MUTED, 500, name))
+            }
+        })
+        addView(TrendView(context, p.trips.take(10).reversed()), LinearLayout.LayoutParams(-1, dp(240)).apply { topMargin = dp(12) })
+    }
+    val e = p.earlierPercent()
+    val timing = card().apply {
+        addView(label(T.SECTION, T.TEXT, 600, "경고 시점"))
+        addView(label(T.KPI, T.TEXT, 600, when { e > 0 -> "$e% 일찍"; e < 0 -> "${-e}% 늦게"; else -> "기본" }).apply { setPadding(0, dp(8), 0, 0) })
+        addView(label(T.SMALL, T.MUTED, 500, "설문과 주행 후 멀미 응답으로 자동 조정돼요"))
+    }
+    val temp = card().apply {
+        addView(label(T.SECTION, T.TEXT, 600, "공기 케어 온도"))
+        addView(LinearLayout(context).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+            addView(button("−") { onTemp(p.careTempC - 0.5f) }.apply { minimumWidth = dp(T.TOUCH) })
+            addView(label(T.KPI, T.TEXT, 600, "%.1f°C".format(p.careTempC)).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(button("+") { onTemp(p.careTempC + 0.5f) }.apply { minimumWidth = dp(T.TOUCH) })
+        })
+        addView(label(T.SMALL, T.MUTED, 500, "케어 중에 온도를 직접 바꾸면 그 값을 기억해요").apply { setPadding(0, dp(8), 0, 0) })
+    }
+    val cares = card().apply {
+        addView(label(T.SECTION, T.TEXT, 600, "케어별 효과"))
+        addView(label(T.SMALL, T.MUTED, 500, "3번 넘게 써도 도움이 적으면 자동으로 꺼져요").apply { setPadding(0, dp(4), 0, dp(4)) })
+        Care.entries.forEach { c ->
+            val s = p.cares[c] ?: CareStat()
+            val on = !s.off
+            addView(View(context).apply { setBackgroundColor(T.RULE) }, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(8) })
+            addView(LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(T.ROW_H)
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label(T.BODY, T.TEXT, 500, careName(c)))
+                    addView(label(T.SMALL, T.MUTED, 400, if (s.runs == 0) "아직 기록 없음" else "도움 ${s.helped}/${s.runs}회"))
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(chip(if (on) "켜짐" else "꺼짐", on) { onToggle(c, !on) })
+            })
+        }
+    }
+    val actions = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        addView(button("프로필 삭제") { onDelete() }.apply { (getChildAt(0) as TextView).setTextColor(T.NEG) })
+        addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
+        addView(button("이 프로필로 시작", primary = true) { onStart() })
+    }
+    val sub = "${seatName(p.seat)} · 주행 ${p.trips.size}회"
+    return page(p.name, sub, onBack, stack(trend, columnsOf(stack(timing, temp), cares, wide), actions))
+}
