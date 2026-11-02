@@ -134,6 +134,7 @@ class MainActivity : Activity() {
         T.p = Palette.of(resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES)
         profiles = store.load()
         show(Screen.RiderSelect)
+        offerResume()
 
         vehicle = Vehicle(this).apply { initialize() }
         val hvac = vehicle.getHVAC()
@@ -226,6 +227,40 @@ class MainActivity : Activity() {
         comfort = Comfort(rider?.sensitivity ?: comfort.sensitivity)
         resetTripState()
         show(Screen.Drive)
+    }
+
+    // --- 생명주기: 다른 앱(내비)으로 가도 측정·케어는 계속, 화면 갱신만 멈춤 ---
+
+    private var visible = true
+    private var lastSaveMs = 0L
+
+    override fun onStart() { super.onStart(); visible = true; if (screen == Screen.Drive) render() }
+    override fun onStop() { visible = false; saveOngoing(); super.onStop() }
+
+    /** 진행 중 주행 저장. 게스트·주행 아님이면 파일을 지움 (게스트 기록은 남기지 않음). */
+    private fun saveOngoing() = runCatching {
+        store.saveOngoing(if (tripOn && demo == null) Ongoing(rider?.id, false, tripStartMs, comfort.snapshot(), caresThisTrip.toSet()) else null)
+    }
+
+    /** 앱이 강제로 꺼졌다 다시 켜졌을 때: 6시간 안의 프로필 주행이면 이어 갈지 묻기 */
+    private fun offerResume() {
+        val o = store.loadOngoing() ?: return
+        val p = profiles.firstOrNull { it.id == o.profileId }
+        if (p == null || System.currentTimeMillis() - o.startMs > RESUME_MAX_MS) { store.saveOngoing(null); return }
+        val min = ((o.comfort["durationS"] ?: 0.0) / 60).roundToInt()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("진행 중이던 주행을 이어갈까요?")
+            .setMessage("${p.name} · ${seatName(p.seat)} · ${min}분 진행")
+            .setCancelable(false)
+            .setNegativeButton("새로 시작") { _, _ -> store.saveOngoing(null) }
+            .setPositiveButton("이어하기") { _, _ ->
+                pickRider(p)
+                comfort.restore(o.comfort)
+                caresThisTrip += o.cares
+                tripStartMs = o.startMs; tripOn = true; demo = null
+                render()
+            }
+            .show()
     }
 
     private fun pickRider(p: Profile?) {
@@ -339,7 +374,8 @@ class MainActivity : Activity() {
 
     private val signalListener = object : TurnSignalStateListener {
         override fun onTurnSignalStateUpdated(state: TurnSignalValue?) {
-            onSignal(when (state) { TurnSignalValue.LEFT -> -1; TurnSignalValue.RIGHT -> 1; else -> 0 })
+            val v = when (state) { TurnSignalValue.LEFT -> -1; TurnSignalValue.RIGHT -> 1; else -> 0 }
+            ui.post { onSignal(v) }   // SDK 콜백은 바인더 스레드 → 화면·음성은 메인 스레드에서
         }
         override fun onFailed(e: Exception) = fail(e)
     }
@@ -385,7 +421,7 @@ class MainActivity : Activity() {
     // 0.5초마다 위험 지수 갱신. 데모 중에는 4배속(0.125초마다)으로 가상 주행을 재생.
     private val tick = object : Runnable {
         override fun run() {
-            if (!tripOn) { render(); ui.postDelayed(this, 500); return }
+            if (!tripOn) { if (visible) render(); ui.postDelayed(this, 500); return }
             val d = demo
             val t = d?.takeIf { it.hasNext() }?.next()
             if (d != null && t == null) { endTrip(); ui.postDelayed(this, 500); return }
@@ -400,7 +436,10 @@ class MainActivity : Activity() {
             highSinceS = if (r == Risk.HIGH) highSinceS ?: comfort.durationS else null
             if (!autoOffered && highSinceS?.let { comfort.durationS - it >= HIGH_OFFER_S } == true) { autoOffered = true; offerRestArea("high") }
             if (comfort.harshJustNow) coach()
-            render()
+            // 30초마다 진행 중 주행 저장 (앱이 강제로 꺼져도 이어 갈 수 있게)
+            val now = System.currentTimeMillis()
+            if (now - lastSaveMs >= SAVE_EVERY_MS) { lastSaveMs = now; saveOngoing() }
+            if (visible) render()
             ui.postDelayed(this, if (demo != null) 125 else 500)
         }
     }
@@ -620,6 +659,7 @@ class MainActivity : Activity() {
 
     private fun endTrip() {
         if (!tripOn) return
+        store.saveOngoing(null)
         tripOn = false; tripEnded = true
         val trip = Trip(tripStartMs, (comfort.durationS / 60).roundToInt(), comfort.score(), comfort.maxRisk,
             null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
@@ -986,6 +1026,8 @@ class MainActivity : Activity() {
         const val HIGH_OFFER_S = 180.0      // 위험 단계가 이만큼 이어지면 휴게소 제안
         const val SICK_ASK_DELAY_MS = 6000L // 즉시 케어 안내가 끝난 뒤 휴게소 질문
         const val STT_TIMEOUT_MS = 8000L
+        const val SAVE_EVERY_MS = 30_000L
+        const val RESUME_MAX_MS = 6 * 3600_000L
         const val TEMP_LEARN_MS = 10 * 60_000L   // 공기 케어 뒤 이 시간 안에 바꾼 온도만 선호로 기억
         const val RECLINE_MS = 1000L   // 등받이 젖히는 시간. 실차에서 몇 도 움직이는지 보고 조정.
     }
