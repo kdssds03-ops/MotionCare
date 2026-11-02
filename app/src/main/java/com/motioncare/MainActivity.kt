@@ -79,6 +79,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        T.p = Palette.of(resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES)
         comfort.sensitivity = prefs.getFloat("sensitivity", 1f).toDouble()
         buildUi()
 
@@ -295,18 +296,18 @@ class MainActivity : Activity() {
 
     private lateinit var scope: TextView
     private lateinit var finding: TextView
-    private lateinit var startBtn: TextView
-    private lateinit var demoBtn: TextView
+    private lateinit var startBtn: LinearLayout
+    private lateinit var demoBtn: LinearLayout
     private lateinit var riskValue: TextView
     private lateinit var riskPill: TextView
     private lateinit var riskNote: TextView
     private lateinit var trace: TraceView
     private lateinit var airState: TextView
     private lateinit var airSub: TextView
-    private lateinit var breathBtn: TextView
+    private lateinit var breathBtn: LinearLayout
     private lateinit var turnState: TextView
     private lateinit var coachState: TextView
-    private lateinit var reclineBtn: TextView
+    private lateinit var reclineBtn: LinearLayout
     private lateinit var reclineSub: TextView
     private lateinit var careFoot: TextView
     private lateinit var scoreV: TextView
@@ -497,13 +498,13 @@ class MainActivity : Activity() {
             risk == Risk.CAUTION -> "흔들림이 커지고 있어요 · 바깥 공기를 넣는 중"
             else -> "흔들림이 적어요 · 주의 단계(6)까지 %.1f 남음".format((Comfort.CAUTION_MSDV - idx).coerceAtLeast(0.0))
         }
-        startBtn.text = if (tripOn) "주행 종료" else "주행 시작"
+        startBtn.buttonText = if (tripOn) "주행 종료" else "주행 시작"
         demoBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
 
         riskValue.text = if (started) "%.1f".format(idx) else "—"
         val (pText, pBg, pInk) = when {
-            !started -> Triple("대기", 0xFF222222.toInt(), T.MUTED)
-            tripEnded -> Triple("주행 종료", 0xFF222222.toInt(), T.MUTED)
+            !started -> Triple("대기", T.RAISED, T.MUTED)
+            tripEnded -> Triple("주행 종료", T.RAISED, T.MUTED)
             risk == Risk.HIGH -> Triple("위험", T.NEG_BG, T.NEG)
             risk == Risk.CAUTION -> Triple("주의", T.WARN_BG, T.WARN)
             else -> Triple("편안", T.POS_BG, T.POS)
@@ -521,15 +522,14 @@ class MainActivity : Activity() {
         }
         airState.text = airAt?.let { ago(it) } ?: "대기"
         val breathLeft = ((breathUntilMs - System.currentTimeMillis()) / 1000).toInt()
-        breathBtn.text = if (breathLeft > 0) "%d:%02d 남음".format(breathLeft / 60, breathLeft % 60) else "시작"
+        breathBtn.buttonText = if (breathLeft > 0) "%d:%02d 남음".format(breathLeft / 60, breathLeft % 60) else "시작"
         turnState.text = turnAt?.let { (if (turnDir < 0) "왼쪽 · " else "오른쪽 · ") + ago(it) } ?: "—"
         coachState.text = if (started) "${coachCount}회" else "—"
         // 등받이: P단이 아니면 버튼을 흐리게 하고 이유를 보여줌
         val seatLocked = parked == false
         reclineSub.text = if (seatLocked) "주행 중에는 시트를 움직일 수 없어요" else "동승석 등받이를 조금 젖혀요"
-        reclineBtn.text = when { reclined -> "젖혔어요"; seatLocked -> "P단에서 가능"; else -> "젖히기" }
-        reclineBtn.setTextColor(if (seatLocked && !reclined) T.FAINT else T.TEXT)
-        reclineBtn.background = fill(0, dp(999).toFloat(), dp(1), if (seatLocked) 0xFF2E3136.toInt() else 0xFF4A4E54.toInt())
+        reclineBtn.buttonText = when { reclined -> "젖혔어요"; seatLocked -> "P단에서 가능"; else -> "젖히기" }
+        reclineBtn.isEnabled = !seatLocked || reclined
         careFoot.text = problem?.let { "차량 응답: $it" } ?: if (lastSpoken.isEmpty()) "" else "마지막 음성 · $lastSpoken"
         careFoot.setTextColor(if (problem != null) T.NEG else T.FAINT)
 
@@ -539,20 +539,20 @@ class MainActivity : Activity() {
         val sec = comfort.durationS.toInt()
         timeV.text = if (started) "%d:%02d".format(sec / 60, sec % 60) else "—"
         taxiV.text = if (tripEnded) "점수 ${comfort.score()} · 급조작 ${comfort.harshEvents}회 · 최고 ${maxV.text} · ${sec / 60}분" else "주행이 끝나면 만들어져요"
-        val (tText, tBg, tInk) = if (tripEnded) Triple("전송 준비됨", T.POS_BG, T.POS) else Triple("주행 중", 0xFF222222.toInt(), T.MUTED)
+        val (tText, tBg, tInk) = if (tripEnded) Triple("전송 준비됨", T.POS_BG, T.POS) else Triple("주행 중", T.RAISED, T.MUTED)
         taxiPill.text = tText; taxiPill.setTextColor(tInk); taxiPill.background = fill(tBg, dp(999).toFloat())
         taxiPill.visibility = if (started) View.VISIBLE else View.INVISIBLE
 
         sensBtns.forEach { (v, b) ->
             val on = abs(v - comfort.sensitivity) < 0.12
-            b.setTextColor(if (on) 0xFF000000.toInt() else T.MUTED)
-            b.background = if (on) fill(T.TEXT, dp(999).toFloat()) else null
+            b.setTextColor(if (on) T.p.primaryText else T.MUTED)
+            b.background = if (on) fill(T.p.primaryBg, dp(999).toFloat()) else null
         }
         miscBtns.forEachIndexed { m, b ->
             val on = feedback == m
             b.isEnabled = tripEnded
-            b.setTextColor(when { on -> 0xFF000000.toInt(); tripEnded -> T.TEXT; else -> T.FAINT })
-            b.background = fill(if (on) T.TEXT else T.RAISED, dp(999).toFloat())
+            b.setTextColor(when { on -> T.p.primaryText; tripEnded -> T.TEXT; else -> T.FAINT })
+            b.background = fill(if (on) T.p.primaryBg else T.RAISED, dp(999).toFloat())
         }
         miscNote.text = when {
             feedback != null -> "반영했어요 · 다음 주행부터 민감도 %.2f".format(comfort.sensitivity)

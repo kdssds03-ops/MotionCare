@@ -13,24 +13,105 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.ceil
 
-// true-black-flat 스타일 (taste-skill). 차갑고 어두운 바탕, 데이터 색은 하늘색 하나.
+/**
+ * 주간 = achromatic-ledger, 야간 = true-black-flat (taste-skill). 색은 데이터에만, 크롬은 무채색.
+ * Pleos UI 가이드: 대비 4.5:1 이상(UiContrastTest), 텍스트 18sp 이상, 터치 64dp 이상.
+ */
+data class Palette(
+    val ground: Int, val surface: Int, val raised: Int, val rule: Int,
+    val text: Int, val muted: Int, val faint: Int, val data: Int,
+    val primaryBg: Int, val primaryText: Int, val secondaryBg: Int,
+    val pos: Int, val posBg: Int, val warn: Int, val warnBg: Int, val neg: Int, val negBg: Int,
+    val sickBg: Int, val sickText: Int,
+) {
+    companion object {
+        private fun c(v: Long) = v.toInt()
+        // 값은 octo ui-ux-designer 명세 (대비는 UiContrastTest가 확인)
+        val DAY = Palette(
+            ground = c(0xFFF8F8F8), surface = c(0xFFFFFFFF), raised = c(0xFFEEEEEE), rule = c(0xFFF0F0F0),
+            text = c(0xFF0A0A0A), muted = c(0xFF5C5C5C), faint = c(0xFF6B6B6B), data = c(0xFF1D5FBF),
+            primaryBg = c(0xFF141414), primaryText = c(0xFFFFFFFF), secondaryBg = c(0xFFE5E5E5),
+            pos = c(0xFF04250E), posBg = c(0xFFDCFAE5), warn = c(0xFF92400E), warnBg = c(0xFFFFFBEB),
+            neg = c(0xFF831C1E), negBg = c(0xFFFFEDEA), sickBg = c(0xFF92400E), sickText = c(0xFFFFFFFF),
+        )
+        val NIGHT = Palette(
+            ground = c(0xFF0C0D0F), surface = c(0xFF15171A), raised = c(0xFF25282C), rule = c(0xFF22252A),
+            text = c(0xFFFFFFFF), muted = c(0xFFB4B4B4), faint = c(0xFF949494), data = c(0xFF4CB3F0),
+            primaryBg = c(0xFFFFFFFF), primaryText = c(0xFF0C0D0F), secondaryBg = c(0xFF25282C),
+            pos = c(0xFF3FC07A), posBg = c(0xFF172A1D), warn = c(0xFFE5A93B), warnBg = c(0xFF2B2414),
+            neg = c(0xFFEE6B82), negBg = c(0xFF2C1A20), sickBg = c(0xFFE5A93B), sickText = c(0xFF1A1306),
+        )
+        fun of(night: Boolean) = if (night) NIGHT else DAY
+    }
+}
+
 // 차량 화면은 보는 거리가 멀어 시트보다 크게: Pleos 시스템 UI 본문(약 22)에 맞춤. 가장 큰 숫자도 48 미만.
 object T {
-    const val GROUND = 0xFF0C0D0F.toInt()
-    const val SURFACE = 0xFF15171A.toInt()
-    const val RAISED = 0xFF25282C.toInt()
-    const val RULE = 0xFF22252A.toInt()
-    const val TEXT = 0xFFFFFFFF.toInt()
-    const val MUTED = 0xFFB4B4B4.toInt()
-    const val FAINT = 0xFF949494.toInt()
-    const val DATA = 0xFF4CB3F0.toInt()          // 공기의 하늘색: 위험 지수 선에만
-    const val POS_BG = 0xFF172A1D.toInt(); const val POS = 0xFF3FC07A.toInt()
-    const val WARN_BG = 0xFF2B2414.toInt(); const val WARN = 0xFFE5A93B.toInt()
-    const val NEG_BG = 0xFF2C1A20.toInt(); const val NEG = 0xFFE5566F.toInt()
+    var p = Palette.NIGHT   // Activity가 시작할 때 시스템 주간/야간에 맞춰 바꾼다
+    val GROUND get() = p.ground
+    val SURFACE get() = p.surface
+    val RAISED get() = p.raised
+    val RULE get() = p.rule
+    val TEXT get() = p.text
+    val MUTED get() = p.muted
+    val FAINT get() = p.faint
+    val DATA get() = p.data
+    val POS_BG get() = p.posBg; val POS get() = p.pos
+    val WARN_BG get() = p.warnBg; val WARN get() = p.warn
+    val NEG_BG get() = p.negBg; val NEG get() = p.neg
 
-    const val TITLE = 32f; const val SECTION = 24f; const val LEAD = 46f; const val KPI = 34f
-    const val BODY = 22f; const val SMALL = 18f
-    const val GAP = 16; const val PAD = 26; const val RADIUS = 20
+
+    const val TITLE = 30f; const val SECTION = 24f; const val LEAD = 44f; const val KPI = 36f
+    const val BODY = 20f; const val SMALL = 18f
+    const val GAP = 16; const val PAD = 24; const val EDGE = 32; const val RADIUS = 20; const val CONTROL_R = 16
+    const val TOUCH = 64; const val PRIMARY_H = 72; const val SICK_H = 88; const val ROW_H = 72   // dp
+}
+
+/** 누르면 즉시(애니메이션 없이) 어두워지는 배경 */
+fun Context.pressable(color: Int, radiusDp: Int, strokeColor: Int = 0) = android.graphics.drawable.StateListDrawable().apply {
+    val r = dp(radiusDp).toFloat()
+    val pressed = blend(color, if (T.p == Palette.NIGHT) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.12f)
+    addState(intArrayOf(android.R.attr.state_pressed), fill(pressed, r, if (strokeColor != 0) dp(1) else 0, strokeColor))
+    addState(intArrayOf(-android.R.attr.state_enabled), fill(T.RAISED, r))
+    addState(intArrayOf(), fill(color, r, if (strokeColor != 0) dp(1) else 0, strokeColor))
+}
+
+fun Context.icon(res: Int, sizeDp: Int = 28, color: Int = T.TEXT) = android.widget.ImageView(this).apply {
+    setImageResource(res)
+    setColorFilter(color)
+    layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+}
+
+/** 아이콘 + 글자 버튼. primary = 주 버튼(72dp), 아니면 보조 버튼(64dp) */
+fun Context.button(text: String, primary: Boolean = false, icon: Int? = null, onClick: () -> Unit) = LinearLayout(this).apply {
+    gravity = Gravity.CENTER
+    minimumHeight = dp(if (primary) T.PRIMARY_H else T.TOUCH)
+    minimumWidth = dp(160)
+    setPadding(dp(24), 0, dp(24), 0)
+    background = pressable(if (primary) T.p.primaryBg else T.p.secondaryBg, T.CONTROL_R)
+    val ink = if (primary) T.p.primaryText else T.TEXT
+    if (icon != null) addView(icon(icon, 28, ink).apply { (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(10) })
+    addView(label(if (primary) T.SECTION else T.BODY, ink, if (primary) 600 else 500, text).apply { tag = "label" })
+    isClickable = true
+    setOnClickListener { onClick() }
+}
+
+/** 버튼 글자 바꾸기 (button()이 만든 뷰) */
+var LinearLayout.buttonText: CharSequence
+    get() = (findViewWithTag<TextView>("label")).text
+    set(v) { findViewWithTag<TextView>("label").text = v }
+
+/** 선택 칩: 선택됨 = 주 버튼 색 + 체크, 아님 = RAISED */
+fun Context.chip(text: String, selected: Boolean, onClick: () -> Unit) = LinearLayout(this).apply {
+    gravity = Gravity.CENTER
+    minimumHeight = dp(T.TOUCH)
+    setPadding(dp(22), 0, dp(22), 0)
+    background = pressable(if (selected) T.p.primaryBg else T.RAISED, 999)
+    val ink = if (selected) T.p.primaryText else T.TEXT
+    if (selected) addView(icon(R.drawable.ic_check, 24, ink).apply { (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(8) })
+    addView(label(T.BODY, ink, if (selected) 600 else 400, text))
+    isClickable = true
+    setOnClickListener { onClick() }
 }
 
 fun Context.dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -50,7 +131,7 @@ fun fill(color: Int, radiusPx: Float, stroke: Int = 0, strokeColor: Int = 0) = G
 
 fun Context.card() = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
-    background = fill(T.SURFACE, dp(T.RADIUS).toFloat())
+    background = fill(T.SURFACE, dp(T.RADIUS).toFloat(), dp(1), T.RULE)
     setPadding(dp(T.PAD), dp(T.PAD - 4), dp(T.PAD), dp(T.PAD))
 }
 
@@ -69,13 +150,9 @@ fun Context.pill(text: String, bg: Int, ink: Int) = label(T.SMALL, ink, 500, tex
     setPadding(dp(14), dp(5), dp(14), dp(5))
 }
 
-/** 버튼: primary = 흰 알약에 검은 글자(반전), 나머지는 테두리만 */
-fun Context.button(text: String, primary: Boolean = false, onClick: () -> Unit) = label(T.BODY, if (primary) 0xFF000000.toInt() else T.TEXT, 500, text).apply {
-    background = if (primary) fill(T.TEXT, dp(999).toFloat()) else fill(0, dp(999).toFloat(), dp(1), 0xFF4A4E54.toInt())
-    gravity = Gravity.CENTER
-    minHeight = dp(48)
-    setPadding(dp(24), 0, dp(24), 0)
-    setOnClickListener { onClick() }
+fun blend(a: Int, b: Int, t: Float): Int {
+    fun ch(s: Int) = (((a shr s) and 0xFF) * (1 - t) + ((b shr s) and 0xFF) * t).toInt() shl s
+    return (0xFF shl 24) or ch(16) or ch(8) or ch(0)
 }
 
 fun Context.spacer() = View(this)
@@ -91,13 +168,13 @@ class TraceView(c: Context) : View(c) {
     fun clear() { count = 0; marks.clear(); invalidate() }
 
     private val d = c.resources.displayMetrics.density
-    private val grid = Paint().apply { color = 0xFF1F2226.toInt(); strokeWidth = d }
-    private val base = Paint().apply { color = 0xFF34383E.toInt(); strokeWidth = 2 * d }
-    private val ref = Paint().apply { color = 0xFF6B6F75.toInt(); strokeWidth = d; style = Paint.Style.STROKE; pathEffect = DashPathEffect(floatArrayOf(4 * d, 4 * d), 0f) }
+    private val grid = Paint().apply { color = T.RULE; strokeWidth = d }
+    private val base = Paint().apply { color = T.RAISED; strokeWidth = 2 * d }
+    private val ref = Paint().apply { color = T.FAINT; strokeWidth = d; style = Paint.Style.STROKE; pathEffect = DashPathEffect(floatArrayOf(4 * d, 4 * d), 0f) }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.DATA; strokeWidth = 2.5f * d; style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND }
     private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.FAINT; textSize = T.SMALL * c.resources.displayMetrics.scaledDensity; fontFeatureSettings = "tnum" }
     private val note = Paint(tick).apply { color = T.MUTED }
-    private val marker = Paint().apply { color = 0xFF8A8F96.toInt(); strokeWidth = d }
+    private val marker = Paint().apply { color = T.MUTED; strokeWidth = d }
 
     override fun onDraw(cv: Canvas) {
         val n = minOf(count, CAP)
