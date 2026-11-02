@@ -41,6 +41,12 @@ class AssistTest {
         assertEquals(emptyList<RestArea>(), parseRestAreas("{oops"))
     }
 
+    @Test fun bundledDataParses() {
+        val areas = parseRestAreas(java.io.File("src/main/res/raw/rest_areas.json").readText())
+        assertTrue("count=${areas.size}", areas.size >= 100)
+        assertTrue(areas.all { it.lat in 33.0..39.0 && it.lon in 124.0..132.0 && it.name.isNotBlank() })
+    }
+
     @Test fun turnCueOncePerManeuver() {
         assertTrue(shouldCueTurn(250.0, "L-용인", null))
         assertFalse(shouldCueTurn(240.0, "L-용인", "L-용인"))

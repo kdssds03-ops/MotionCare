@@ -34,3 +34,6 @@
 설치: `adb install -g apk/MotionCare_멀미케어_release.apk` (`-g`로 차량·위치 권한을 함께 허용)
 
 직접 release 빌드하려면 프로젝트 루트에 `keystore.properties`(storeFile, storePassword, keyAlias, keyPassword)를 두고 `./gradlew assembleRelease`. 서명 키는 저장소에 포함되지 않습니다.
+
+## 데이터 출처
+- 휴게소 위치(`app/src/main/res/raw/rest_areas.json`): © OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/). Overpass API로 대한민국 `highway=services` 중 이름에 "휴게소"·"쉼터"가 들어간 670곳 (2026-11-02 기준).
