@@ -1,5 +1,8 @@
 package com.motioncare
 
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
 import kotlin.math.roundToInt
 
 enum class Seat { FRONT_RIGHT, REAR_LEFT, REAR_RIGHT }
@@ -60,3 +63,82 @@ fun learnTemp(observedC: Float): Float = observedC.coerceIn(18f, 26f)
 
 /** 기본 대비 몇 % 일찍 경고하는지 (음수면 늦게) */
 fun Profile.earlierPercent(): Int = ((sensitivity - 1.0) * 100).roundToInt()
+
+/** 진행 중인 주행. profileId가 null이면 게스트이고 파일에 남기지 않는다. */
+data class Ongoing(
+    val profileId: String?, val demo: Boolean, val startMs: Long,
+    val comfort: Map<String, Double>, val cares: Set<Care>,
+)
+
+/** 차 안(앱 내부 저장소)에만 저장. 임시 파일에 쓰고 교체해서, 쓰는 중에 꺼져도 깨지지 않게 한다. */
+class ProfileStore(private val dir: File) {
+    private val profiles = File(dir, "profiles.json")
+    private val ongoing = File(dir, "ongoing.json")
+
+    fun load(): List<Profile> = runCatching {
+        val a = JSONArray(profiles.readText())
+        List(a.length()) { a.getJSONObject(it).toProfile() }
+    }.getOrDefault(emptyList())
+
+    fun save(list: List<Profile>) = write(profiles, JSONArray(list.map { it.toJson() }).toString())
+
+    fun saveOngoing(o: Ongoing?) {
+        if (o?.profileId == null) { ongoing.delete(); return }
+        write(ongoing, JSONObject()
+            .put("profileId", o.profileId).put("demo", o.demo).put("startMs", o.startMs)
+            .put("comfort", JSONObject(o.comfort)).put("cares", JSONArray(o.cares.map { it.name }))
+            .toString())
+    }
+
+    fun loadOngoing(): Ongoing? = runCatching {
+        val j = JSONObject(ongoing.readText())
+        val c = j.getJSONObject("comfort")
+        Ongoing(
+            j.getString("profileId"), j.getBoolean("demo"), j.getLong("startMs"),
+            c.keys().asSequence().associateWith { c.getDouble(it) }, cares(j.getJSONArray("cares")),
+        )
+    }.getOrNull()
+
+    private fun write(f: File, text: String) {
+        dir.mkdirs()
+        val tmp = File(dir, f.name + ".tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+    }
+}
+
+private fun cares(a: JSONArray): Set<Care> = List(a.length()) { Care.valueOf(a.getString(it)) }.toSet()
+
+private fun Profile.toJson() = JSONObject()
+    .put("id", id).put("name", name).put("seat", seat.name).put("sensitivity", sensitivity)
+    .put("careTempC", careTempC.toDouble())
+    .put("cares", JSONObject(cares.mapKeys { it.key.name }.mapValues {
+        JSONObject().put("runs", it.value.runs).put("helped", it.value.helped).put("off", it.value.off)
+    }))
+    .put("trips", JSONArray(trips.map { t ->
+        JSONObject().put("startMs", t.startMs).put("minutes", t.minutes).put("score", t.score)
+            .put("maxRisk", t.maxRisk.name).put("misc", t.misc ?: JSONObject.NULL)
+            .put("cares", JSONArray(t.cares.map { it.name })).put("helped", JSONArray(t.helped.map { it.name }))
+            .put("demo", t.demo)
+    }))
+
+private fun JSONObject.toProfile(): Profile {
+    val c = getJSONObject("cares")
+    val t = getJSONArray("trips")
+    return Profile(
+        id = getString("id"), name = getString("name"), seat = Seat.valueOf(getString("seat")),
+        sensitivity = getDouble("sensitivity"), careTempC = getDouble("careTempC").toFloat(),
+        cares = c.keys().asSequence().associate { k ->
+            val s = c.getJSONObject(k)
+            Care.valueOf(k) to CareStat(s.getInt("runs"), s.getInt("helped"), s.getBoolean("off"))
+        },
+        trips = List(t.length()) {
+            val j = t.getJSONObject(it)
+            Trip(
+                j.getLong("startMs"), j.getInt("minutes"), j.getInt("score"), Risk.valueOf(j.getString("maxRisk")),
+                if (j.isNull("misc")) null else j.getInt("misc"),
+                cares(j.getJSONArray("cares")), cares(j.getJSONArray("helped")), j.getBoolean("demo"),
+            )
+        },
+    )
+}

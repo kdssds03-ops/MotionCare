@@ -55,6 +55,18 @@ class ComfortTest {
         assertEquals(Risk.LOW, straight.maxRisk)
     }
 
+    @Test fun comfortSnapshotRestores() {
+        val a = Comfort(1.3)
+        demoDrive().take(240).forEach { a.update(it.speed, it.heading, 0.5) }   // 120초
+        val b = Comfort()
+        b.restore(a.snapshot())
+        assertEquals(a.windowMsdv, b.windowMsdv, 1e-9)
+        assertEquals(a.score(), b.score())
+        assertEquals(a.harshEvents, b.harshEvents)
+        assertEquals(a.maxRisk, b.maxRisk)
+        assertEquals(1.3, b.sensitivity, 1e-9)
+    }
+
     @Test fun headingWrapsAcrossNorth() {
         assertEquals(-2.0, Comfort.wrapDeg(358.0 - 0.0), 1e-9)
         assertEquals(2.0, Comfort.wrapDeg(1.0 - 359.0), 1e-9)

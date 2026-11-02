@@ -59,6 +59,44 @@ class ProfileTest {
         assertEquals(22.5f, learnTemp(22.5f))
     }
 
+    @get:org.junit.Rule val tmp = org.junit.rules.TemporaryFolder()
+
+    @Test fun roundTrip() {
+        val store = ProfileStore(tmp.root)
+        val a = base.copy(careTempC = 22.5f, cares = mapOf(Care.AIR to CareStat(3, 1, false), Care.BREATH to CareStat(4, 0, true)),
+            trips = listOf(trip(6, Risk.HIGH, setOf(Care.AIR, Care.BREATH), setOf(Care.AIR), start = 123).copy(demo = true), trip(null, start = 5)))
+        val b = Profile(id = "p2", name = "엄마", seat = Seat.FRONT_RIGHT, sensitivity = 1.3)
+        store.save(listOf(a, b))
+        assertEquals(listOf(a, b), ProfileStore(tmp.root).load())
+    }
+
+    @Test fun corruptFileGivesEmpty() {
+        java.io.File(tmp.root, "profiles.json").writeText("{oops")
+        assertEquals(emptyList<Profile>(), ProfileStore(tmp.root).load())
+    }
+
+    @Test fun missingFileGivesEmpty() = assertEquals(emptyList<Profile>(), ProfileStore(tmp.root).load())
+
+    @Test fun atomicWriteLeavesNoTemp() {
+        ProfileStore(tmp.root).save(listOf(base))
+        assertTrue(tmp.root.listFiles()!!.none { it.name.endsWith(".tmp") })
+    }
+
+    @Test fun guestOngoingNotPersisted() {
+        val store = ProfileStore(tmp.root)
+        store.saveOngoing(Ongoing("p1", demo = false, startMs = 1, comfort = mapOf("durationS" to 60.0), cares = setOf(Care.AIR)))
+        store.saveOngoing(Ongoing(null, demo = false, startMs = 2, comfort = emptyMap(), cares = emptySet()))
+        assertEquals(null, store.loadOngoing())
+        assertFalse(java.io.File(tmp.root, "ongoing.json").exists())
+    }
+
+    @Test fun ongoingRoundTrip() {
+        val o = Ongoing("p1", demo = true, startMs = 42, comfort = mapOf("durationS" to 61.5, "maxRisk" to 2.0), cares = setOf(Care.BREATH))
+        val store = ProfileStore(tmp.root)
+        store.saveOngoing(o)
+        assertEquals(o, store.loadOngoing())
+    }
+
     @Test fun earlierPercent() {
         assertEquals(20, base.copy(sensitivity = 1.2).earlierPercent())
         assertEquals(-10, base.copy(sensitivity = 0.9).earlierPercent())

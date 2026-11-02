@@ -49,4 +49,5 @@ dependencies {
     implementation("ai.pleos.playground:FusedLocation:1.1.3")
     implementation("ai.pleos.playground:TextToSpeech:3.3.1")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")   // JVM 테스트에는 Android org.json 구현이 없음
 }

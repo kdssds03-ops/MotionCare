@@ -88,6 +88,23 @@ class Comfort(var sensitivity: Double = 1.0) {
         return r
     }
 
+    /** 앱이 다시 켜져도 주행을 이어가기 위한 상태 (저장용) */
+    fun snapshot(): Map<String, Double> = mapOf(
+        "windowEnergy" to windowEnergy, "totalEnergy" to totalEnergy, "durationS" to durationS,
+        "harshEvents" to harshEvents.toDouble(), "maxRisk" to maxRisk.ordinal.toDouble(), "sensitivity" to sensitivity,
+    )
+
+    // ponytail: 필터 내부 상태와 직전 속도는 복원하지 않는다. 몇 초 안에 다시 안정되므로 충분. 문제가 보이면 함께 저장.
+    fun restore(m: Map<String, Double>) {
+        windowEnergy = m["windowEnergy"] ?: 0.0
+        totalEnergy = m["totalEnergy"] ?: 0.0
+        durationS = m["durationS"] ?: 0.0
+        harshEvents = (m["harshEvents"] ?: 0.0).toInt()
+        maxRisk = Risk.entries[(m["maxRisk"] ?: 0.0).toInt().coerceIn(0, Risk.entries.size - 1)]
+        sensitivity = m["sensitivity"] ?: sensitivity
+        windowMsdv = sqrt(windowEnergy)
+    }
+
     /** 0~100점. 급조작 횟수 + 시간 보정한 누적 MSDV로 감점. */
     fun score(): Int {
         val minutes = durationS / 60
