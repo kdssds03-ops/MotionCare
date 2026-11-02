@@ -89,7 +89,14 @@ fun Context.riderSelect(
                     addView(label(T.SMALL, T.MUTED, 500, seatName(p.seat)))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 val last = p.trips.firstOrNull()
-                addView(label(if (last != null) T.KPI else T.SMALL, if (last != null) T.TEXT else T.MUTED, 700, last?.score?.toString() ?: "첫 주행"))
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.END
+                    if (last != null) {
+                        addView(label(T.KPI, T.TEXT, 700, "${last.score}"))
+                        addView(label(T.SMALL, T.MUTED, 500, "최근 편안함"))
+                    } else addView(label(T.SMALL, T.MUTED, 500, "첫 주행"))
+                })
             })
             addView(button("기록 · 설정") { onDetail(p) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) })
         }
@@ -232,11 +239,18 @@ fun Context.report(
     val feedback = card().apply {
         addView(label(T.SECTION, T.TEXT, 600, "멀미는 어땠나요?"))
         addView(label(T.SMALL, T.MUTED, 500, "0 괜찮음 · 10 토할 것 같음 · 알려주시면 다음 경고 시점을 맞춰요").apply { setPadding(0, dp(4), 0, 0) })
-        addView(LinearLayout(context).apply {
-            setPadding(0, dp(12), 0, 0)
-            for (m in 0..10) addView(chip("$m", r.misc == m) { r.misc = m; onChange() }.apply { setPadding(0, 0, 0, 0) },
-                LinearLayout.LayoutParams(0, -2, 1f).apply { if (m > 0) marginStart = dp(6) })
-        })
+        // 0~10을 두 줄로: 칩 사이 16dp 간격을 지키면서 64dp 높이 유지 (Pleos 터치 규칙)
+        listOf(0..5, 6..10).forEach { range ->
+            addView(LinearLayout(context).apply {
+                setPadding(0, dp(12), 0, 0)
+                for (m in 0..5) {
+                    val v = range.first + m
+                    val c = if (v in range) chip("$v", r.misc == v) { r.misc = v; onChange() }.apply { setPadding(0, 0, 0, 0) }
+                            else android.widget.Space(context)
+                    addView(c, LinearLayout.LayoutParams(0, -2, 1f).apply { if (m > 0) marginStart = dp(T.GAP) })
+                }
+            })
+        }
         if (t.cares.isNotEmpty()) {
             addView(label(T.BODY, T.TEXT, 500, "도움이 된 케어 (선택)").apply { setPadding(0, dp(20), 0, 0) })
             addView(chipRow(Care.entries.filter { it in t.cares }.map { c ->
@@ -246,12 +260,16 @@ fun Context.report(
     }
     val learn = card().apply {
         addView(label(T.SECTION, T.TEXT, 600, if (rider != null) "${rider.name}님 학습" else "게스트 주행"))
-        val line = rider?.let { learningLine(it, it.learn(r.final())) } ?: "게스트는 기록을 남기지 않아요 · 프로필로 저장하면 다음부터 맞춰 드려요"
+        val line = when {
+            !worthKeeping(t) -> "1분 미만 주행은 기록하지 않아요"
+            rider != null -> learningLine(rider, rider.learn(r.final()))
+            else -> "게스트는 기록을 남기지 않아요 · 프로필로 저장하면 다음부터 맞춰 드려요"
+        }
         addView(label(T.BODY, T.TEXT, 400, line).apply { setPadding(0, dp(8), 0, 0) })
     }
     val actions = LinearLayout(this).apply {
         gravity = Gravity.END
-        if (rider == null && canSaveGuest) addView(button("프로필로 저장", icon = R.drawable.ic_person) { onSaveGuest() },
+        if (rider == null && canSaveGuest && worthKeeping(t)) addView(button("프로필로 저장", icon = R.drawable.ic_person) { onSaveGuest() },
             LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(T.GAP) })
         addView(button(if (rider != null) "저장하고 완료" else "완료", primary = true, icon = R.drawable.ic_check) { onDone() })
     }
@@ -270,7 +288,7 @@ fun Context.profileDetail(
             gravity = Gravity.CENTER_VERTICAL
             addView(label(T.SECTION, T.TEXT, 600, "최근 10회 편안함 점수"), LinearLayout.LayoutParams(0, -2, 1f))
             // 범례: 색 견본은 크기를 정해 줘야 함 (wrap_content View는 남는 높이를 다 차지)
-            listOf(Triple(T.DATA, 4, "점수"), Triple(T.WARN, 8, "멀미 0~10")).forEach { (color, r, name) ->
+            listOf(Triple(T.DATA, 4, "점수"), Triple(blend(T.DATA, T.SURFACE, 0.6f), 4, "데모 주행"), Triple(T.WARN, 8, "멀미 응답(0~10)")).forEach { (color, r, name) ->
                 addView(View(context).apply { background = fill(color, dp(r).toFloat()) },
                     LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(T.GAP); marginEnd = dp(8) })
                 addView(label(T.SMALL, T.MUTED, 500, name))

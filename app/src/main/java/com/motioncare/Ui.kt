@@ -177,6 +177,9 @@ class TraceView(c: Context) : View(c) {
     private val marker = Paint().apply { color = T.MUTED; strokeWidth = d }
 
     override fun onDraw(cv: Canvas) {
+        // 이 뷰는 화면을 다시 그려도 재사용되므로 주간/야간 색을 그릴 때마다 맞춤
+        grid.color = T.RULE; base.color = T.RAISED; ref.color = T.FAINT; line.color = T.DATA
+        tick.color = T.FAINT; note.color = T.MUTED; marker.color = T.MUTED
         val n = minOf(count, CAP)
         val lane = 44 * d                       // y 눈금 자리
         val top = (if (marks.any { it.first > count - CAP }) 34 else 10) * d
@@ -229,7 +232,7 @@ class TraceView(c: Context) : View(c) {
             val mx = x(pos)
             cv.drawLine(mx, top - 6 * d, mx, bottom, marker)
             if (groupName.isNotEmpty() && mx < groupX + note.measureText(groupName) + 18 * d) {
-                groupName += " · $name"
+                if (name !in groupName.split(" · ")) groupName += " · $name"   // 같은 케어가 연달아 오면 한 번만
             } else { flush(); groupX = mx; groupName = name }
         }
         flush()
@@ -265,6 +268,7 @@ class TrendView(c: Context, private val trips: List<Trip>) : View(c) {
     private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.MUTED; textSize = T.SMALL * sp; textAlign = Paint.Align.CENTER; fontFeatureSettings = "tnum" }
 
     init { minimumHeight = (220 * d).toInt() }
+    private companion object { val DAY = java.text.SimpleDateFormat("M/d", java.util.Locale.KOREA) }
 
     override fun onDraw(cv: Canvas) {
         val top = 30 * d; val bottom = height - 30 * d
@@ -278,7 +282,7 @@ class TrendView(c: Context, private val trips: List<Trip>) : View(c) {
             cv.drawRoundRect(cx - bw / 2, y, cx + bw / 2, bottom, 6 * d, 6 * d, if (t.demo) demoBar else bar)
             cv.drawText("${t.score}", cx, y - 8 * d, txt)
             t.misc?.let { m -> cv.drawCircle(cx, bottom - (bottom - top) * m / 10f, 7 * d, dot) }
-            cv.drawText(if (t.demo) "데모" else "${i + 1}", cx, bottom + 24 * d, txt)
+            cv.drawText(DAY.format(java.util.Date(t.startMs)), cx, bottom + 24 * d, txt)
         }
     }
 }

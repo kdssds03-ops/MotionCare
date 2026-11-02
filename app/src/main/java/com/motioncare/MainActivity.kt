@@ -221,7 +221,7 @@ class MainActivity : Activity() {
     private fun finishReport() {
         val r = report ?: return show(Screen.Drive)
         val t = r.final()
-        if (rider != null) updateRider { it.learn(t) }
+        if (rider != null && worthKeeping(t)) updateRider { it.learn(t) }
         else t.misc?.let { comfort.feedback(it) }
         report = null; tripEnded = false
         comfort = Comfort(rider?.sensitivity ?: comfort.sensitivity)
@@ -773,7 +773,7 @@ class MainActivity : Activity() {
         turnState = label(T.SMALL, T.MUTED)
         coachState = label(T.SMALL, T.MUTED)
         reclineBtn = button("젖히기") { recline() }
-        careFoot = label(T.SMALL, T.FAINT)
+        careFoot = label(T.SMALL, T.FAINT).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }   // 3줄 이내 규칙
         val careCard = card().apply {
             addView(label(T.SECTION, T.TEXT, 500, "지금 하는 케어"))
             // 다섯 줄이 카드 높이에 고르게 퍼져서 아래에 빈 띠가 남지 않게
@@ -828,7 +828,7 @@ class MainActivity : Activity() {
             addView(label(T.SMALL, T.MUTED, 400, "멀미 민감도").apply { setPadding(0, dp(14), 0, dp(8)) })
             addView(sensRow)
             addView(riderNote.apply { setPadding(0, dp(12), 0, 0) })
-            rider?.let { p -> addView(button("기록 · 설정") { show(Screen.ProfileDetail(p.id)) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }) }
+            rider?.let { p -> addView(button("기록 · 설정") { show(Screen.ProfileDetail(p.id)) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) }) }
         }
         root.addView(pair(tripCard, riderCard, wide), LinearLayout.LayoutParams(-1, -2).apply { topMargin = g })
 

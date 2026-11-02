@@ -120,4 +120,9 @@ class ProfileTest {
         assertEquals(CareStat(4, 3, off = true), p.disableCare(Care.AIR).cares[Care.AIR])
         assertEquals(CareStat(0, 0, off = true), p.disableCare(Care.RECLINE).cares[Care.RECLINE])
     }
+
+    @Test fun tripsUnderOneMinuteAreNotKept() {
+        assertFalse(worthKeeping(trip(null).copy(minutes = 0)))
+        assertTrue(worthKeeping(trip(null).copy(minutes = 1)))
+    }
 }

@@ -59,6 +59,9 @@ fun Profile.learn(trip: Trip): Profile {
 /** 다시 켜면 기록을 처음부터 쌓는다. 그래야 바로 다시 꺼지지 않는다. */
 fun Profile.enableCare(c: Care): Profile = copy(cares = cares + (c to CareStat()))
 
+/** 1분도 안 된 주행(잘못 누름, 이어하기 직후 종료)은 점수가 의미 없어 기록하지 않는다 */
+fun worthKeeping(t: Trip) = t.minutes >= 1
+
 /** 사용자가 직접 끔. 기록은 그대로 둔다. */
 fun Profile.disableCare(c: Care): Profile = copy(cares = cares + (c to (cares[c] ?: CareStat()).copy(off = true)))
 
