@@ -19,6 +19,8 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <meta-data android:name="distractionOptimized" android:value="true" />
             <intent-filter>

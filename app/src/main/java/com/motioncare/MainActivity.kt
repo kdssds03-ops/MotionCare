@@ -21,9 +21,12 @@ import ai.pleos.playground.vehicle.listener.TurnSignalStateListener
 import android.app.Activity
 import android.car.Car
 import android.car.VehiclePropertyIds
+import android.car.drivingstate.CarUxRestrictions
+import android.car.drivingstate.CarUxRestrictionsManager
 import android.car.hardware.CarPropertyValue
 import android.car.hardware.property.CarPropertyManager
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -38,7 +41,16 @@ import kotlin.math.abs
 class MainActivity : Activity() {
 
     private val ui = Handler(Looper.getMainLooper())
-    private val prefs by lazy { getSharedPreferences("care", MODE_PRIVATE) }
+    private val store by lazy { ProfileStore(filesDir) }
+    private var profiles: List<Profile> = emptyList()
+    /** 지금 탄 사람. null = 게스트 (기록을 남기지 않음) */
+    var rider: Profile? = null
+        private set
+    private var screen: Screen = Screen.RiderSelect
+    private val draft = Draft()
+    private var uxNoKeyboard: Boolean? = null   // 차량 UX 규제(키보드 금지), 모르면 null
+    /** 주행 중 키보드 입력 금지: 차량 규제가 금지하거나 P단이 아니면 막음 */
+    val keyboardAllowed get() = uxNoKeyboard != true && parked != false
 
     private lateinit var vehicle: Vehicle
     private lateinit var location: FusedLocation
@@ -80,8 +92,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         T.p = Palette.of(resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES)
-        comfort.sensitivity = prefs.getFloat("sensitivity", 1f).toDouble()
-        buildUi()
+        profiles = store.load()
+        show(Screen.RiderSelect)
 
         vehicle = Vehicle(this).apply { initialize() }
         val hvac = vehicle.getHVAC()
@@ -110,8 +122,69 @@ class MainActivity : Activity() {
         if (perms.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) startSensors()
         else requestPermissions(perms, 1)
 
-        render()
         ui.post(tick)
+    }
+
+    // --- 화면 전환 ---
+
+    fun show(s: Screen) {
+        screen = s
+        setContentView(when (s) {
+            Screen.RiderSelect -> riderSelect(
+                profiles.sortedByDescending { p -> p.trips.firstOrNull()?.startMs ?: 0L }, columns(),
+                onPick = ::pickRider, onDetail = { show(Screen.ProfileDetail(it.id)) },
+                onGuest = { pickRider(null) }, onNew = { show(Screen.CreateProfile) })
+            Screen.CreateProfile -> createProfile(draft, keyboardAllowed,
+                onChange = { show(Screen.CreateProfile) }, onSave = ::saveDraft, onCancel = { show(Screen.RiderSelect) })
+            // ponytail: 리포트·상세 화면은 Task 8에서 채움. 지금은 주행 화면 아래 카드가 리포트 역할.
+            Screen.Drive, Screen.Report -> buildUi()
+            is Screen.ProfileDetail -> page(profiles.firstOrNull { it.id == s.id }?.name ?: "프로필", "기록과 설정은 곧 볼 수 있어요",
+                { show(Screen.RiderSelect) }, View(this))
+        })
+        render()
+    }
+
+    private fun pickRider(p: Profile?) {
+        rider = p
+        comfort = Comfort(p?.sensitivity ?: 1.0)
+        risk = Risk.LOW; tripEnded = false; feedback = null
+        trace.clear()
+        show(Screen.Drive)
+    }
+
+    private fun saveDraft() {
+        if (!draft.valid || !keyboardAllowed) { show(Screen.CreateProfile); return }
+        val p = Profile(java.util.UUID.randomUUID().toString(), draft.name.take(10), draft.seat!!, surveySensitivity(draft.answers.toList()))
+        profiles = profiles + p
+        store.save(profiles)
+        draft.name = ""; draft.seat = null; draft.answers.fill(-1)
+        pickRider(p)
+    }
+
+    /** 게스트는 저장하지 않음. 프로필이면 목록에 반영하고 파일에 저장. */
+    private fun updateRider(f: (Profile) -> Profile) {
+        val p = rider ?: return
+        val n = f(p)
+        rider = n
+        profiles = profiles.map { if (it.id == n.id) n else it }
+        store.save(profiles)
+    }
+
+    @Deprecated("Activity 기본 뒤로가기")
+    override fun onBackPressed() {
+        when (screen) {
+            Screen.RiderSelect -> super.onBackPressed()
+            // 주행 중에는 화면만 내리고 주행은 계속 (닫으면 기록이 사라짐)
+            Screen.Drive, Screen.Report -> if (tripOn) moveTaskToBack(true) else show(Screen.RiderSelect)
+            else -> show(Screen.RiderSelect)
+        }
+    }
+
+    // 회전·주간/야간 전환 때 액티비티를 새로 만들지 않고 같은 상태로 다시 그림
+    override fun onConfigurationChanged(c: Configuration) {
+        super.onConfigurationChanged(c)
+        T.p = Palette.of(c.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES)
+        show(screen)
     }
 
     override fun onRequestPermissionsResult(code: Int, p: Array<String>, r: IntArray) = startSensors()
@@ -129,6 +202,16 @@ class MainActivity : Activity() {
             )
         }.onFailure { fail(Exception("속도 센서를 읽을 수 없어요")) }
         runCatching {
+            val ux = car?.getCarManager(Car.CAR_UX_RESTRICTION_SERVICE) as? CarUxRestrictionsManager
+            val apply = { r: CarUxRestrictions? ->
+                val was = keyboardAllowed
+                uxNoKeyboard = r?.let { it.activeRestrictions and CarUxRestrictions.UX_RESTRICTIONS_NO_KEYBOARD != 0 }
+                if (was != keyboardAllowed) ui.post { if (screen == Screen.CreateProfile) show(screen) }
+            }
+            apply(ux?.currentCarUxRestrictions)
+            ux?.registerListener { apply(it) }
+        }
+        runCatching {
             if (location.isSupported()) {
                 location.initialize()
                 location.registerFusedLocationCallback(locationListener)
@@ -143,9 +226,10 @@ class MainActivity : Activity() {
 
     private val gearListener = object : GearSelectionListener {
         override fun onSelected(gear: VehicleGear?) {
+            val was = keyboardAllowed
             parked = gear?.let { it == VehicleGear.GEAR_PARK }
             if (parked == true && problem?.startsWith("주행 중") == true) problem = null
-            ui.post { render() }
+            ui.post { if (screen == Screen.CreateProfile && was != keyboardAllowed) show(screen) else render() }
         }
         override fun onFailed(e: Exception) = fail(e)
     }
@@ -282,26 +366,28 @@ class MainActivity : Activity() {
         if (!tripEnded) return
         comfort.feedback(m)
         feedback = m
-        prefs.edit().putFloat("sensitivity", comfort.sensitivity.toFloat()).apply()
+        updateRider { it.copy(sensitivity = comfort.sensitivity) }
         render()
     }
 
     private fun setSensitivity(s: Double) {
         comfort.sensitivity = s
-        prefs.edit().putFloat("sensitivity", s.toFloat()).apply()
+        updateRider { it.copy(sensitivity = s) }
         render()
     }
 
     // --- 화면 ---
 
     private lateinit var scope: TextView
+    private lateinit var backBtn: LinearLayout
     private lateinit var finding: TextView
     private lateinit var startBtn: LinearLayout
     private lateinit var demoBtn: LinearLayout
     private lateinit var riskValue: TextView
     private lateinit var riskPill: TextView
     private lateinit var riskNote: TextView
-    private lateinit var trace: TraceView
+    // 그래프는 화면을 다시 그려도 기록이 남도록 한 번만 만듦
+    private val trace by lazy { TraceView(this) }
     private lateinit var airState: TextView
     private lateinit var airSub: TextView
     private lateinit var breathBtn: LinearLayout
@@ -320,7 +406,9 @@ class MainActivity : Activity() {
     private val miscBtns = ArrayList<TextView>()
     private lateinit var miscNote: TextView
 
-    private fun buildUi() {
+    private fun buildUi(): View {
+        sensBtns.clear(); miscBtns.clear()
+        (trace.parent as? android.view.ViewGroup)?.removeView(trace)
         val g = dp(T.GAP)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -332,6 +420,8 @@ class MainActivity : Activity() {
         scope = label(T.SMALL, T.MUTED)
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
+            backBtn = button("탑승자", icon = R.drawable.ic_back) { onBackPressed() }.apply { minimumWidth = 0 }
+            addView(backBtn, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(T.GAP) })
             addView(MarkView(context), LinearLayout.LayoutParams(dp(32), dp(32)))
             addView(label(T.SECTION, T.TEXT, 600, "멀미케어").apply { setPadding(dp(12), 0, 0, 0) })
             addView(spacer(), LinearLayout.LayoutParams(0, 1, 1f))
@@ -354,7 +444,6 @@ class MainActivity : Activity() {
         })
 
         // 1행: 위험 지수(2/3) | 케어(1/3)
-        trace = TraceView(this)
         riskValue = label(T.LEAD, T.TEXT, 500)
         riskPill = pill("", 0, 0)
         riskNote = label(T.SMALL, T.MUTED)
@@ -461,7 +550,7 @@ class MainActivity : Activity() {
             addView(riderCard, LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = g })
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = g })
 
-        setContentView(ScrollView(this).apply { setBackgroundColor(T.GROUND); isFillViewport = true; addView(root) })
+        return ScrollView(this).apply { setBackgroundColor(T.GROUND); isFillViewport = true; addView(root) }
     }
 
     /** 케어 카드 한 줄: 이름과 설명, 오른쪽에 상태나 버튼 */
@@ -483,10 +572,12 @@ class MainActivity : Activity() {
     private fun ago(s: Double) = (comfort.durationS - s).toInt().let { "%d:%02d 전".format(it / 60, it % 60) }
 
     private fun render() {
+        if (screen != Screen.Drive && screen != Screen.Report) return
         val idx = comfort.windowMsdv * comfort.sensitivity
         val started = tripOn || tripEnded
         val sensName = when { comfort.sensitivity < 0.9 -> "낮음"; comfort.sensitivity > 1.15 -> "높음"; else -> "보통" }
-        scope.text = "동승석(오른쪽 앞) · 민감도 $sensName"
+        scope.text = (rider?.let { "${it.name} · ${seatName(it.seat)}" } ?: "게스트 · 기록 안 남김") + " · 민감도 $sensName"
+        backBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
 
         // 20초(40샘플) 전보다 낮으면 회복 중
         val falling = trace.count > 40 && idx < trace.values[(trace.count - 41) % TraceView.CAP] - 0.05
