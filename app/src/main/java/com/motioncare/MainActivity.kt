@@ -3,6 +3,19 @@ package com.motioncare
 import ai.pleos.playground.location.fused.FusedLocation
 import ai.pleos.playground.location.fused.listener.FusedLocationListener
 import ai.pleos.playground.location.fused.model.LocationData
+import ai.pleos.playground.navi.constants.NaviErrorCode
+import ai.pleos.playground.navi.constants.NaviMode
+import ai.pleos.playground.navi.constants.NavigationStatus
+import ai.pleos.playground.navi.constants.WaypointIndex
+import ai.pleos.playground.navi.constants.RouteOption
+import ai.pleos.playground.navi.data.RequestWaypointInfo
+import ai.pleos.playground.navi.data.RouteInfo
+import ai.pleos.playground.navi.data.RouteStateInfo
+import ai.pleos.playground.navi.data.TBTInfo
+import ai.pleos.playground.navi.helper.NaviHelper
+import ai.pleos.playground.navi.helper.listener.NaviHelperEventListener
+import ai.pleos.playground.stt.SpeechToText
+import ai.pleos.playground.stt.listener.ResultListener
 import ai.pleos.playground.tts.TextToSpeech
 import ai.pleos.playground.tts.constant.ErrorType
 import ai.pleos.playground.tts.constant.Mode
@@ -16,6 +29,7 @@ import ai.pleos.playground.vehicle.constant.control.MoveControl
 import ai.pleos.playground.vehicle.constant.unit.TemperatureUnit
 import ai.pleos.playground.vehicle.constant.control.VehicleGear
 import ai.pleos.playground.vehicle.listener.GearSelectionListener
+import ai.pleos.playground.vehicle.listener.HvacTemperatureListener
 import ai.pleos.playground.vehicle.listener.SteeringWheelAngleListener
 import ai.pleos.playground.vehicle.listener.TurnSignalStateListener
 import android.app.Activity
@@ -37,6 +51,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
 
@@ -88,6 +103,29 @@ class MainActivity : Activity() {
     private var feedback: Int? = null
     private var parked: Boolean? = null   // 기어 P 여부, 모르면 null
     private var reclined = false
+    private var reclineAreas: List<SeatArea>? = null   // 등받이를 움직일 수 있는 좌석, 모르면 null
+
+    // 즉시 케어·음성·휴게소·내비
+    private lateinit var stt: SpeechToText
+    private var sttReady = false
+    private var listening = false
+    private lateinit var navi: NaviHelper
+    private var naviReady = false
+    private var routeActive = false      // 내비 경로 안내 중이면 방향지시등 예고 대신 내비 회전 예고
+    private var lastTbtKey: String? = null
+    private var lastLat: Double? = null
+    private var lastLon: Double? = null
+    private val restAreas by lazy { parseRestAreas(resources.openRawResource(R.raw.rest_areas).bufferedReader().readText()) }
+    private var offer: Pair<RestArea, Double>? = null   // 지금 묻고 있는 휴게소
+    private var pendingRest: RestArea? = null           // 내비 상태 확인을 기다리는 휴게소
+    private var assistNote: String? = null              // 한 줄 안내 (음성 인식·휴게소·내비 결과)
+    private var highSinceS: Double? = null
+    private var autoOffered = false
+    private val gate = SpeechGate()
+    /** 이번 주행에서 실제로 실행된 케어 (리포트·학습용) */
+    val caresThisTrip = mutableSetOf<Care>()
+    private val sentTemp = HashMap<SeatArea, Float>()   // 앱이 마지막으로 보낸 좌석별 온도
+    private val tempListeners = HashMap<SeatArea, HvacTemperatureListener>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,7 +140,9 @@ class MainActivity : Activity() {
         hvac.checkHvacFanSpeedCapabilities({ _, map -> fanMax = map.mapValues { it.value.maxValue } }, ::fail)
         hvac.checkHvacTemperatureCapabilities({ _, map: Map<SeatArea, AreaBounds<Float>> ->
             tempRange = map.mapValues { it.value.minValue..it.value.maxValue }
+            tempRange.keys.forEach { a -> hvac.registerHvacTemperature(a, tempListeners.getOrPut(a) { tempListener(a) }) }
         }, ::fail)
+        vehicle.getSeat().checkMoveSeatBackrestAngleCapabilities({ _, list -> reclineAreas = list; ui.post { render() } }, { reclineAreas = null })
         vehicle.getLight().checkAmbientLightBrightnessCapabilities({ _, map ->
             ambient = map.mapValues { it.value.minValue..it.value.maxValue }
         }, ::fail)
@@ -118,7 +158,10 @@ class MainActivity : Activity() {
         })
 
         location = FusedLocation(this)
-        val perms = arrayOf(Car.PERMISSION_SPEED, "pleos.car.permission.FUSED_LOCATION")
+        stt = SpeechToText(applicationContext, ai.pleos.playground.stt.constant.Mode.ON_DEVICE)
+        navi = NaviHelper(this)
+        val perms = arrayOf(Car.PERMISSION_SPEED, "pleos.car.permission.FUSED_LOCATION", "pleos.car.permission.STT_SERVICE",
+            "pleos.car.permission.NAVI_ROUTE", "pleos.car.permission.NAVI_ROUTE_SEARCH")
         if (perms.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) startSensors()
         else requestPermissions(perms, 1)
 
@@ -191,6 +234,14 @@ class MainActivity : Activity() {
 
     // 권한이 거부돼도 앱은 꺼지지 않고 데모 주행은 가능하도록 실패만 기록
     private fun startSensors() {
+        // 음성 인식·내비는 실패해도 버튼 흐름은 그대로 동작 (안내만 바뀜)
+        runCatching {
+            stt.initialize(object : ai.pleos.playground.stt.listener.OnInitializeListener {
+                override fun onSuccess() { stt.setLocale(Locale.KOREA); stt.addListener(sttListener); sttReady = true }
+                override fun onFailure(error: ai.pleos.playground.stt.constant.ErrorType) { sttReady = false }
+            })
+        }
+        runCatching { navi.initialize({ naviReady = true; navi.addListener(naviListener) }, { naviReady = false }) }
         runCatching {
             car = Car.createCar(this)
             (car?.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager)?.registerCallback(
@@ -220,7 +271,9 @@ class MainActivity : Activity() {
     }
 
     private val locationListener = object : FusedLocationListener {
-        override fun onChanged(data: LocationData?) { data?.let { liveHeading = it.heading.toDouble() } }
+        override fun onChanged(data: LocationData?) {
+            data?.let { liveHeading = it.heading.toDouble(); lastLat = it.latitude; lastLon = it.longitude }
+        }
         override fun onError(e: Exception) = fail(e)
     }
 
@@ -246,6 +299,40 @@ class MainActivity : Activity() {
         override fun onFailed(e: Exception) = fail(e)
     }
 
+    /** 사람이 공조 온도를 직접 바꾸면 프로필의 선호 온도로 기억 (공기 케어를 한 좌석만) */
+    private fun tempListener(a: SeatArea) = object : HvacTemperatureListener {
+        override fun onHvacTemperatureUpdated(v: Float?) {
+            if (v == null || a != careTempArea()) return
+            ui.post { if (isUserTemp(sentTemp[a], v)) { sentTemp[a] = v; updateRider { it.copy(careTempC = learnTemp(v)) } } }
+        }
+        override fun onFailed(e: Exception) {}
+    }
+
+    private val sttListener = object : ResultListener {
+        override fun onUpdated(text: String, completed: Boolean) { if (completed) ui.post { heard(text) } }
+        override fun onError(e: ai.pleos.playground.stt.constant.ErrorType) { ui.post { heard(null) } }
+        override fun onUpdatedEpdData(a: Long, b: Long) {}
+        override fun onStartedRecognition() {}
+        override fun onEndedRecognition() {}
+        override fun onReady() {}
+        override fun onUpdatedRms(rms: Double) {}
+    }
+
+    // NaviHelper 콜백은 어느 스레드에서 올지 몰라 모두 메인 스레드로 넘김
+    private val naviListener = object : NaviHelperEventListener {
+        override fun onNavigationStatus(s: NavigationStatus) { ui.post { routeActive = s == NavigationStatus.ROUTE_DRIVE } }
+        override fun onRouteEnded() { ui.post { routeActive = false } }
+        override fun onRouteCancelled() { ui.post { routeActive = false } }
+        override fun onRouteStarted(info: ai.pleos.playground.navi.data.RouteStartInfo) { ui.post { routeActive = true } }
+        override fun onRouteStateInfo(info: RouteStateInfo) {
+            // isRouting은 경로 계산 중 여부라서 안내 중인지는 naviMode로 판단 (에뮬레이터에서 확인)
+            val guiding = info.naviMode == NaviMode.ROUTE_GUIDING || info.naviMode == NaviMode.SIMULATION_GUIDING
+            ui.post { routeActive = guiding; pendingRest?.let { sendRest(it) } }
+        }
+        override fun onTBTInfo(list: List<TBTInfo>) { ui.post { onTbt(list.firstOrNull()) } }
+        override fun onError(code: NaviErrorCode) { ui.post { assistNote = "내비가 요청을 처리하지 못했어요 · 케어는 계속할게요"; render() } }
+    }
+
     // 0.5초마다 위험 지수 갱신. 데모 중에는 4배속(0.125초마다)으로 가상 주행을 재생.
     private val tick = object : Runnable {
         override fun run() {
@@ -257,9 +344,12 @@ class MainActivity : Activity() {
             // 실제 주행에서는 핸들 각도 우선, 데모는 미리 만든 진행 방향 사용
             val r = comfort.update(t?.speed ?: liveSpeed, t?.heading ?: liveHeading, DT, if (t == null) liveSteer else null)
             trace.push(comfort.windowMsdv * comfort.sensitivity)
-            if (r >= Risk.CAUTION && risk < Risk.CAUTION) airCare()
-            if (r == Risk.HIGH && risk < Risk.HIGH) breathing()
+            if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR)) airCare()
+            if (r == Risk.HIGH && risk < Risk.HIGH && careOn(Care.BREATH)) breathing()
             risk = r
+            // 위험 단계가 3분 이어지면 주행당 한 번 휴게소 제안
+            highSinceS = if (r == Risk.HIGH) highSinceS ?: comfort.durationS else null
+            if (!autoOffered && highSinceS?.let { comfort.durationS - it >= HIGH_OFFER_S } == true) { autoOffered = true; offerRestArea("high") }
             if (comfort.harshJustNow) coach()
             render()
             ui.postDelayed(this, if (demo != null) 125 else 500)
@@ -269,8 +359,9 @@ class MainActivity : Activity() {
     // --- 케어 동작 ---
 
     /** 바람 케어: 외기 유입 + 풍량 올리기 + 온도 살짝 낮추기 (D'Amour 2017) */
-    private fun airCare() {
-        say("멀미 위험이 올라가고 있어요. 바깥 공기를 넣고 바람을 조금 세게 할게요. 앞쪽 창밖을 바라봐 주세요.")
+    private fun airCare(quiet: Boolean = false) {
+        if (!quiet) say("멀미 위험이 올라가고 있어요. 바깥 공기를 넣고 바람을 조금 세게 할게요. 앞쪽 창밖을 바라봐 주세요.")
+        caresThisTrip += Care.AIR
         airAt = comfort.durationS
         trace.mark("공기 케어")
         val hvac = vehicle.getHVAC()
@@ -288,16 +379,19 @@ class MainActivity : Activity() {
             // 좌석별 온도를 0.3초 간격으로: Pleos 에뮬레이터는 거의 동시에 온 두 요청 중
             // 마지막 좌석 변경만 알려서, 앞 좌석(운전석)이 화면과 차량 서비스에 옛 값으로 남았음
             tempRange.entries.forEachIndexed { i, (a, r) ->
+                val t = careTemp().coerceIn(r)
                 ui.postDelayed({
-                    hvac.setHvacTemperature(a, CARE_TEMP_C.coerceIn(r), TemperatureUnit.CELSIUS, onFailed = ::fail)
+                    sentTemp[a] = t
+                    hvac.setHvacTemperature(a, t, TemperatureUnit.CELSIUS, onFailed = ::fail)
                 }, i * TEMP_GAP_MS)
             }
         }, 500)
     }
 
     /** 호흡 가이드: 조명 4초 밝게(들숨) / 4초 어둡게(날숨), 분당 7.5회 (Stromberg 2015) */
-    private fun breathing() {
-        say("천천히 숨 쉬어 볼게요. 조명이 밝아지면 들이쉬고, 어두워지면 내쉬세요.")
+    private fun breathing(quiet: Boolean = false) {
+        if (!quiet) say("천천히 숨 쉬어 볼게요. 조명이 밝아지면 들이쉬고, 어두워지면 내쉬세요.")
+        caresThisTrip += Care.BREATH
         breathUntilMs = System.currentTimeMillis() + 60_000
         if (tripOn) trace.mark("호흡 가이드")
         val light = vehicle.getLight()
@@ -317,7 +411,8 @@ class MainActivity : Activity() {
     private fun recline() {
         if (parked == false) { render(); return }
         val seat = vehicle.getSeat()
-        val area = SeatArea(SeatValue.ROW_1_RIGHT)
+        val area = careSeatArea()
+        caresThisTrip += Care.RECLINE
         seat.moveSeatBackrestAngle(area, MoveControl.BACKWARD,
             onComplete = { _, _ -> reclined = true; ui.post { render() } }, onFailed = ::fail)
         ui.postDelayed({ seat.moveSeatBackrestAngle(area, MoveControl.STOP, onFailed = ::fail) }, RECLINE_MS)
@@ -325,7 +420,8 @@ class MainActivity : Activity() {
 
     /** 움직임 예고: 방향지시등이 켜지면 동승자에게 미리 알림 */
     private fun onSignal(s: Int) {
-        if (s != 0 && s != lastSignal) {
+        if (s != 0 && s != lastSignal && !routeActive && careOn(Care.TURN_CUE)) {
+            caresThisTrip += Care.TURN_CUE
             say(if (s < 0) "곧 왼쪽으로 돌아요" else "곧 오른쪽으로 돌아요")
             turnDir = s; turnAt = comfort.durationS
         }
@@ -341,6 +437,117 @@ class MainActivity : Activity() {
         say("동승자를 위해 조금만 더 부드럽게 운전해 주세요.")
     }
 
+    /** 내비 회전 예고: 좌·우·급회전·유턴만, 같은 회전은 한 번 */
+    private fun onTbt(t: TBTInfo?) {
+        if (t == null || !careOn(Care.TURN_CUE)) return
+        val side = turnSide(t.type.name)
+        val key = "${t.type}-${t.description}"
+        if (side == 0 || !shouldCueTurn(t.distance, key, lastTbtKey)) return
+        lastTbtKey = key
+        caresThisTrip += Care.TURN_CUE
+        turnDir = side; turnAt = comfort.durationS
+        say(turnCueText(side, t.distance))
+        render()
+    }
+
+    private fun careOn(c: Care) = rider?.cares?.get(c)?.off != true
+    private fun careTemp() = rider?.careTempC ?: CARE_TEMP_C
+    private fun careSeat() = when (rider?.seat ?: Seat.FRONT_RIGHT) {
+        Seat.FRONT_RIGHT -> SeatValue.ROW_1_RIGHT; Seat.REAR_LEFT -> SeatValue.ROW_2_LEFT; Seat.REAR_RIGHT -> SeatValue.ROW_2_RIGHT
+    }
+    private fun careSeatArea() = SeatArea(careSeat())
+    /** 탑승자 자리의 공조 구역. 뒷좌석에 따로 구역이 없으면 동승석 구역을 따름. (구역 하나가 여러 좌석을 묶기도 함) */
+    private fun careTempArea() = tempRange.keys.firstOrNull { careSeat() in it.values }
+        ?: tempRange.keys.firstOrNull { SeatValue.ROW_1_RIGHT in it.values }
+
+    /** "속이 안 좋아요": 공기 케어 + 호흡 가이드(꺼둔 케어는 건너뜀) + 휴게소 제안 */
+    fun sickNow() {
+        val air = careOn(Care.AIR); val breath = careOn(Care.BREATH)
+        say(when {
+            air && breath -> "바로 도와드릴게요. 바깥 공기를 넣고, 조명에 맞춰 천천히 숨 쉬어 볼게요."
+            air -> "바로 도와드릴게요. 바깥 공기를 넣을게요. 앞쪽 창밖을 바라봐 주세요."
+            breath -> "바로 도와드릴게요. 조명에 맞춰 천천히 숨 쉬어 볼게요."
+            else -> "알겠어요. 가까운 휴게소를 찾아볼게요."
+        })
+        if (air) airCare(quiet = true)
+        if (breath) breathing(quiet = true)
+        // 첫 안내가 끝난 뒤 휴게소를 물어봄
+        ui.postDelayed({ offerRestArea("sick") }, if (air || breath) SICK_ASK_DELAY_MS else 0)
+        render()
+    }
+
+    /** 가장 가까운 휴게소(직선 50km 안)를 경유지로 제안. 위치·휴게소가 없으면 한 줄 안내만. */
+    fun offerRestArea(reason: String) {
+        val lat = lastLat; val lon = lastLon
+        val hit = if (lat == null || lon == null) null else nearestRestArea(lat, lon, restAreas)
+        offer = hit
+        assistNote = when {
+            lat == null || lon == null -> "아직 위치를 몰라서 휴게소를 찾지 못했어요"
+            hit == null -> "50km 안에 휴게소가 없어요 · 케어는 계속할게요"
+            else -> null
+        }
+        if (lat != null && hit == null) say("근처에 휴게소가 없어요. 케어는 계속할게요.")
+        if (hit != null) {
+            val km = hit.second.roundToInt()
+            say((if (reason == "high") "멀미 위험이 계속 높아요. " else "") + "가까운 휴게소는 약 ${km}km 거리의 ${hit.first.name}입니다. 경유지로 추가할까요?")
+        }
+        render()
+    }
+
+    private fun acceptRest(yes: Boolean) {
+        val (area, _) = offer ?: return
+        offer = null
+        if (!yes) { assistNote = null; render(); return }
+        if (!naviReady) { assistNote = "내비에 연결하지 못했어요 · 운전자에게 ${area.name} 안내를 부탁해 주세요"; render(); return }
+        // 경로 안내 중인지 먼저 묻고(목적지를 덮어쓰지 않도록), 답이 없으면 1.5초 뒤 마지막으로 아는 상태로 진행
+        pendingRest = area
+        runCatching { navi.getRouteStateInfo() }
+        ui.postDelayed({ pendingRest?.let { sendRest(it) } }, 1500)
+    }
+
+    /** 안내 중이면 경유지로 추가, 아니면 휴게소까지 편안한 길(COMFORTABLE)로 바로 안내 */
+    private fun sendRest(area: RestArea) {
+        pendingRest = null
+        assistNote = runCatching {
+            if (routeActive) {
+                navi.addWaypoint(RequestWaypointInfo(area.lat, area.lon, area.name, WaypointIndex.FIRST, "", "", "", ""))
+                say("경유지로 추가했어요. ${area.name}에서 쉬어 가요.")
+                "경유지 추가 · ${area.name}"
+            } else {
+                navi.requestRoute(RouteInfo(area.lat, area.lon, null, null, area.name, "", "", "", RouteOption.COMFORTABLE, "", false))
+                say("${area.name}까지 편안한 길로 안내할게요.")
+                "휴게소 안내 시작 · ${area.name}"
+            }
+        }.getOrElse { "내비에 연결하지 못했어요 · 운전자에게 ${area.name} 안내를 부탁해 주세요" }
+        render()
+    }
+
+    /** 마이크: 8초 안에 알아들은 말이 없으면 버튼 안내 */
+    private fun listen() {
+        if (listening) return
+        if (!sttReady) { assistNote = "음성 인식을 쓸 수 없어요 · 버튼을 눌러주세요"; render(); return }
+        listening = true
+        assistNote = if (offer != null) "듣고 있어요 · \"추가\" 또는 \"괜찮아\"" else "듣고 있어요 · \"속이 안 좋아\"라고 말해 보세요"
+        runCatching { stt.request() }.onFailure { heard(null); return }
+        ui.postDelayed(sttTimeout, STT_TIMEOUT_MS)
+        render()
+    }
+
+    private val sttTimeout = Runnable { if (listening) heard(null) }
+
+    private fun heard(text: String?) {
+        if (!listening) return
+        listening = false
+        ui.removeCallbacks(sttTimeout)
+        runCatching { stt.stop() }
+        val yes = text?.let { answer(it) }
+        when {
+            text != null && offer != null && yes != null -> acceptRest(yes)
+            text != null && isSick(text) -> { assistNote = null; sickNow() }
+            else -> { assistNote = "잘 못 들었어요 · 버튼을 눌러주세요"; render() }
+        }
+    }
+
     // --- 주행 시작/종료 ---
 
     private fun startTrip(withDemo: Boolean) {
@@ -350,6 +557,7 @@ class MainActivity : Activity() {
         tripOn = true; tripEnded = false
         airAt = null; airFan = null; turnAt = null; coachCount = 0; problem = null; feedback = null
         reclined = false
+        caresThisTrip.clear(); offer = null; assistNote = null; highSinceS = null; autoOffered = false; lastTbtKey = null
         trace.clear()
         render()
     }
@@ -405,6 +613,12 @@ class MainActivity : Activity() {
     private val sensBtns = ArrayList<Pair<Double, TextView>>()
     private val miscBtns = ArrayList<TextView>()
     private lateinit var miscNote: TextView
+    private lateinit var titleV: TextView
+    private lateinit var reclineRow: View
+    private lateinit var micBtn: LinearLayout
+    private lateinit var restCard: LinearLayout
+    private lateinit var restText: TextView
+    private lateinit var noteV: TextView
 
     private fun buildUi(): View {
         sensBtns.clear(); miscBtns.clear()
@@ -413,7 +627,12 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(T.GROUND)
-            setPadding(dp(29), dp(20), dp(29), dp(29))
+            setPadding(dp(29), dp(20), dp(29), 0)
+        }
+        // 휴게소 제안·안내·"속이 안 좋아요"는 스크롤 밖 하단에 고정 (항상 보이게)
+        val bottom = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(29), 0, dp(29), dp(24))
         }
 
         // 상단: 제품 마크와 이름, 오른쪽에 대상 좌석과 민감도
@@ -437,7 +656,8 @@ class MainActivity : Activity() {
             setPadding(0, dp(24), 0, dp(20))
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(label(T.TITLE, T.TEXT, 600, "동승석 멀미 케어"))
+                titleV = label(T.TITLE, T.TEXT, 600)
+                addView(titleV)
                 addView(finding.apply { setPadding(0, dp(6), 0, 0) })
             }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(row(demoBtn, startBtn, gap = 12))
@@ -475,14 +695,13 @@ class MainActivity : Activity() {
             each(careRow("회전 예고", label(T.SMALL, T.MUTED, 400, "방향지시등이 켜지면 음성으로 알려요"), turnState))
             each(careRow("운전자 안내", label(T.SMALL, T.MUTED, 400, "급조작 시 30초에 한 번까지"), coachState))
             reclineSub = label(T.SMALL, T.MUTED)
-            each(careRow("등받이", reclineSub, reclineBtn))
+            reclineRow = careRow("등받이", reclineSub, reclineBtn)
+            each(reclineRow)
             addView(careFoot.apply { setPadding(0, dp(12), 0, 0) })
         }
         // 1행이 창의 남는 높이를 모두 차지해서 바닥에 빈 띠가 생기지 않게
-        root.addView(LinearLayout(this).apply {
-            addView(riskCard, LinearLayout.LayoutParams(0, -1, 2f))
-            addView(careCard, LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = g })
-        }, LinearLayout.LayoutParams(-1, 0, 1f))
+        val wide = columns() > 1
+        root.addView(pair(riskCard, careCard, wide), LinearLayout.LayoutParams(-1, if (wide) 0 else -2, 1f))
 
         // 2행: 이번 주행(2/3) | 탑승자(1/3)
         scoreV = label(T.KPI, T.TEXT, 500); harshV = label(T.KPI, T.TEXT, 500)
@@ -545,12 +764,56 @@ class MainActivity : Activity() {
             addView(miscRow)
             addView(miscNote.apply { setPadding(0, dp(10), 0, 0) })
         }
-        root.addView(LinearLayout(this).apply {
-            addView(tripCard, LinearLayout.LayoutParams(0, -1, 2f))
-            addView(riderCard, LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = g })
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = g })
+        root.addView(pair(tripCard, riderCard, wide), LinearLayout.LayoutParams(-1, -2).apply { topMargin = g })
 
-        return ScrollView(this).apply { setBackgroundColor(T.GROUND); isFillViewport = true; addView(root) }
+        // 휴게소 제안 카드 (제안 중일 때만)
+        restText = label(T.SECTION, T.TEXT, 600)
+        restCard = card().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            addView(row(icon(R.drawable.ic_rest, 32), restText), LinearLayout.LayoutParams(if (wide) 0 else -1, -2, 1f))
+            addView(row(button("괜찮아요") { acceptRest(false) }, button("경유지 추가", primary = true, icon = R.drawable.ic_add) { acceptRest(true) }).apply {
+                if (!wide) setPadding(0, g, 0, 0)
+            })
+        }
+        bottom.addView(restCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+
+        // 맨 아래: 한 줄 안내 + "속이 안 좋아요" + 마이크
+        noteV = label(T.BODY, T.TEXT, 500).apply { setPadding(dp(4), 0, 0, 0) }
+        bottom.addView(noteV, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        val sick = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            minimumHeight = dp(T.SICK_H)
+            background = pressable(T.p.sickBg, T.CONTROL_R)
+            addView(icon(R.drawable.ic_wind, 32, T.p.sickText).apply { (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(12) })
+            addView(label(T.SECTION, T.p.sickText, 700, "속이 안 좋아요"))
+            isClickable = true
+            setOnClickListener { sickNow() }
+        }
+        micBtn = button("말하기", icon = R.drawable.ic_mic) { listen() }.apply { minimumHeight = dp(T.SICK_H) }
+        bottom.addView(LinearLayout(this).apply {
+            addView(sick, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(micBtn, LinearLayout.LayoutParams(-2, -1).apply { marginStart = g })
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(T.GROUND)
+            addView(ScrollView(context).apply { isFillViewport = true; addView(root) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(bottom)
+        }
+    }
+
+    /** 넓으면 2:1 가로 배치, 좁으면(세로 화면) 위아래로 쌓기 */
+    private fun pair(a: View, b: View, wide: Boolean) = LinearLayout(this).apply {
+        orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        if (wide) {
+            addView(a, LinearLayout.LayoutParams(0, -1, 2f))
+            addView(b, LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = dp(T.GAP) })
+        } else {
+            addView(a, LinearLayout.LayoutParams(-1, -2))
+            addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) })
+        }
     }
 
     /** 케어 카드 한 줄: 이름과 설명, 오른쪽에 상태나 버튼 */
@@ -578,6 +841,15 @@ class MainActivity : Activity() {
         val sensName = when { comfort.sensitivity < 0.9 -> "낮음"; comfort.sensitivity > 1.15 -> "높음"; else -> "보통" }
         scope.text = (rider?.let { "${it.name} · ${seatName(it.seat)}" } ?: "게스트 · 기록 안 남김") + " · 민감도 $sensName"
         backBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
+        val seat = rider?.seat ?: Seat.FRONT_RIGHT
+        titleV.text = "${seatName(seat)} 멀미 케어"
+        restCard.visibility = if (offer != null) View.VISIBLE else View.GONE
+        offer?.let { (a, km) -> restText.text = "${a.name} · 약 ${km.roundToInt()}km · 경유지로 추가할까요?" }
+        noteV.text = assistNote ?: ""
+        noteV.visibility = if (assistNote != null) View.VISIBLE else View.GONE
+        micBtn.buttonText = if (listening) "듣는 중" else "말하기"
+        // 좌석이 등받이 이동을 지원하지 않으면 줄을 숨김 (지원 목록을 모르면 보여줌)
+        reclineRow.visibility = if (reclineAreas?.any { careSeat() in it.values } == false) View.GONE else View.VISIBLE
 
         // 20초(40샘플) 전보다 낮으면 회복 중
         val falling = trace.count > 40 && idx < trace.values[(trace.count - 41) % TraceView.CAP] - 0.05
@@ -609,7 +881,7 @@ class MainActivity : Activity() {
 
         airSub.text = when {
             airAt == null -> "주의 단계가 되면 바깥 공기를 넣어요"
-            else -> "외기 · " + (airFan?.let { "풍량 ${it}단 · " } ?: "") + "%.0f°C".format(CARE_TEMP_C)
+            else -> "외기 · " + (airFan?.let { "풍량 ${it}단 · " } ?: "") + "%.1f°C".format(careTemp())
         }
         airState.text = airAt?.let { ago(it) } ?: "대기"
         val breathLeft = ((breathUntilMs - System.currentTimeMillis()) / 1000).toInt()
@@ -618,7 +890,7 @@ class MainActivity : Activity() {
         coachState.text = if (started) "${coachCount}회" else "—"
         // 등받이: P단이 아니면 버튼을 흐리게 하고 이유를 보여줌
         val seatLocked = parked == false
-        reclineSub.text = if (seatLocked) "주행 중에는 시트를 움직일 수 없어요" else "동승석 등받이를 조금 젖혀요"
+        reclineSub.text = if (seatLocked) "주행 중에는 시트를 움직일 수 없어요" else "${seatName(seat)} 등받이를 조금 젖혀요"
         reclineBtn.buttonText = when { reclined -> "젖혔어요"; seatLocked -> "P단에서 가능"; else -> "젖히기" }
         reclineBtn.isEnabled = !seatLocked || reclined
         careFoot.text = problem?.let { "차량 응답: $it" } ?: if (lastSpoken.isEmpty()) "" else "마지막 음성 · $lastSpoken"
@@ -653,6 +925,7 @@ class MainActivity : Activity() {
     }
 
     private fun say(text: String) {
+        if (!gate.allow(text, System.currentTimeMillis())) return   // 같은 말 30초 안 반복 금지
         android.util.Log.i("MotionCare", "say: $text")   // 시연 영상 음성 동기화용
         lastSpoken = text
         if (ttsReady) tts.speak(text, true)
@@ -679,6 +952,9 @@ class MainActivity : Activity() {
         vehicle.release()
         location.release()
         tts.release()
+        runCatching { stt.removeListener(sttListener); stt.release() }
+        runCatching { navi.removeListener(naviListener); navi.release() }
+        tempListeners.forEach { (a, l) -> runCatching { vehicle.getHVAC().unregisterHvacTemperature(a, l) } }
         car?.disconnect()
         super.onDestroy()
     }
@@ -687,6 +963,9 @@ class MainActivity : Activity() {
         const val DT = 0.5
         const val CARE_TEMP_C = 21f
         const val TEMP_GAP_MS = 300L
+        const val HIGH_OFFER_S = 180.0      // 위험 단계가 이만큼 이어지면 휴게소 제안
+        const val SICK_ASK_DELAY_MS = 6000L // 즉시 케어 안내가 끝난 뒤 휴게소 질문
+        const val STT_TIMEOUT_MS = 8000L
         const val RECLINE_MS = 1000L   // 등받이 젖히는 시간. 실차에서 몇 도 움직이는지 보고 조정.
     }
 }

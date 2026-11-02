@@ -61,4 +61,21 @@ class AssistTest {
         assertTrue(g.allow("곧 오른쪽", 11_000))
         assertTrue(g.allow("곧 왼쪽", 31_000))
     }
+
+    @Test fun turnSideFromNaviType() {
+        assertEquals(-1, turnSide("TURN_LEFT")); assertEquals(-1, turnSide("TURN_SHARP_L")); assertEquals(-1, turnSide("TURN_UTURN"))
+        assertEquals(1, turnSide("TURN_RIGHT")); assertEquals(1, turnSide("TURN_SHARP_R"))
+        assertEquals(0, turnSide("TURN_STRAIGHT")); assertEquals(0, turnSide("TURN_KEEP_L")); assertEquals(0, turnSide("TURN_TOLL"))
+    }
+
+    @Test fun turnCueTextRoundsDown() {
+        assertEquals("250m 뒤 왼쪽으로 돌아요", turnCueText(-1, 287.0))
+        assertEquals("50m 뒤 오른쪽으로 돌아요", turnCueText(1, 31.0))
+    }
+
+    @Test fun userTempOnlyWhenDifferentFromSent() {
+        assertFalse(isUserTemp(null, 23f))
+        assertFalse(isUserTemp(21f, 21.05f))
+        assertTrue(isUserTemp(21f, 23f))
+    }
 }

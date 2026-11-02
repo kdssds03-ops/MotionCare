@@ -53,3 +53,17 @@ class SpeechGate(private val gapMs: Long = 30_000) {
         return true
     }
 }
+
+/** 내비 회전 종류(TurnType 이름) → -1 왼쪽, 1 오른쪽, 0 예고 안 함. 차선 유지·IC 진출입은 흔들림이 작아 제외. */
+fun turnSide(type: String): Int = when (type) {
+    "TURN_LEFT", "TURN_SHARP_L", "TURN_UTURN" -> -1
+    "TURN_RIGHT", "TURN_SHARP_R" -> 1
+    else -> 0
+}
+
+/** "250m 뒤 왼쪽으로 돌아요" (50m 단위로 내림, 최소 50m) */
+fun turnCueText(side: Int, distanceM: Double): String =
+    "${maxOf(50, (distanceM / 50).toInt() * 50)}m 뒤 ${if (side < 0) "왼쪽" else "오른쪽"}으로 돌아요"
+
+/** 앱이 보낸 온도와 0.1도 이상 다르면 사람이 직접 바꾼 것 */
+fun isUserTemp(sent: Float?, observed: Float): Boolean = sent != null && kotlin.math.abs(observed - sent) >= 0.1f
