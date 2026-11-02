@@ -98,7 +98,11 @@ class ProfileStore(private val dir: File) {
     fun load(): List<Profile> = runCatching {
         val a = JSONArray(profiles.readText())
         List(a.length()) { a.getJSONObject(it).toProfile() }
-    }.getOrDefault(emptyList())
+    }.getOrElse {
+        // 읽을 수 없는 파일은 지우지 않고 .bad로 옮겨 둠 (다음 저장이 덮어써서 모두 잃지 않게)
+        if (profiles.exists()) profiles.renameTo(File(dir, "profiles.json.bad"))
+        emptyList()
+    }
 
     fun save(list: List<Profile>) = write(profiles, JSONArray(list.map { it.toJson() }).toString())
 

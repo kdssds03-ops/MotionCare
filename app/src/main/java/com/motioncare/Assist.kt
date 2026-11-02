@@ -10,7 +10,7 @@ import kotlin.math.sqrt
 // "속이 안 좋아요" 즉시 케어, 휴게소, 회전 예고를 판단하는 순수 로직 (화면·SDK와 분리해서 테스트)
 
 private val SICK = listOf("속이", "속 안", "멀미", "어지러", "토할", "메스꺼", "울렁")
-private val NO = listOf("아니", "됐어", "괜찮아", "취소")
+private val NO = listOf("아니", "됐어", "괜찮아", "취소", "안 좋", "안좋")   // "속이 안 좋아"가 "좋아"로 예가 되지 않게
 private val YES = listOf("예", "네", "응", "좋아", "추가")
 
 fun isSick(text: String): Boolean = SICK.any { it in text }

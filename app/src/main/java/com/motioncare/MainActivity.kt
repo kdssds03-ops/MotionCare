@@ -560,9 +560,13 @@ class MainActivity : Activity() {
         if (air) airCare(quiet = true)
         if (breath) breathing(quiet = true)
         // 첫 안내가 끝난 뒤 휴게소를 물어봄
-        ui.postDelayed({ offerRestArea("sick") }, if (air || breath) SICK_ASK_DELAY_MS else 0)
+        ui.removeCallbacks(askRest)
+        ui.postDelayed(askRest, if (air || breath) SICK_ASK_DELAY_MS else 0)
         render()
     }
+
+    // 주행이 끝나면 취소: 리포트 화면에서 카드 없이 질문만 들리지 않게
+    private val askRest = Runnable { offerRestArea("sick") }
 
     /** 가장 가까운 휴게소(직선 50km 안)를 경유지로 제안. 위치·휴게소가 없으면 한 줄 안내만. */
     fun offerRestArea(reason: String) {
@@ -652,6 +656,7 @@ class MainActivity : Activity() {
     private fun resetTripState() {
         airAt = null; airFan = null; turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
         caresThisTrip.clear(); offer = null; pendingRest = null; assistNote = null
+        ui.removeCallbacks(askRest)
         highSinceS = null; autoOffered = false; lastTbtKey = null
         risk = Risk.LOW
         trace.clear()
@@ -660,6 +665,7 @@ class MainActivity : Activity() {
     private fun endTrip() {
         if (!tripOn) return
         store.saveOngoing(null)
+        ui.removeCallbacks(askRest); offer = null
         tripOn = false; tripEnded = true
         val trip = Trip(tripStartMs, (comfort.durationS / 60).roundToInt(), comfort.score(), comfort.maxRisk,
             null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
@@ -701,6 +707,7 @@ class MainActivity : Activity() {
     private lateinit var timeV: TextView
     private val sensBtns = ArrayList<Pair<Double, TextView>>()
     private lateinit var riderNote: TextView
+    private var detailBtn: LinearLayout? = null
     private lateinit var titleV: TextView
     private lateinit var reclineRow: View
     private lateinit var micBtn: LinearLayout
@@ -828,7 +835,8 @@ class MainActivity : Activity() {
             addView(label(T.SMALL, T.MUTED, 400, "멀미 민감도").apply { setPadding(0, dp(14), 0, dp(8)) })
             addView(sensRow)
             addView(riderNote.apply { setPadding(0, dp(12), 0, 0) })
-            rider?.let { p -> addView(button("기록 · 설정") { show(Screen.ProfileDetail(p.id)) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) }) }
+            // 주행 중에는 숨김: 상세 화면의 시작·삭제가 진행 중 주행을 초기화하거나 게스트로 바꿀 수 있음
+            detailBtn = rider?.let { p -> button("기록 · 설정") { show(Screen.ProfileDetail(p.id)) }.also { addView(it, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) }) } }
         }
         root.addView(pair(tripCard, riderCard, wide), LinearLayout.LayoutParams(-1, -2).apply { topMargin = g })
 
@@ -907,6 +915,7 @@ class MainActivity : Activity() {
         val sensName = SENS.minBy { abs(it.first - comfort.sensitivity) }.second
         scope.text = (rider?.let { "${it.name} · ${seatName(it.seat)}" } ?: "게스트 · 기록 안 남김") + " · 민감도 $sensName"
         backBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
+        detailBtn?.visibility = if (tripOn) View.GONE else View.VISIBLE
         val seat = rider?.seat ?: Seat.FRONT_RIGHT
         titleV.text = "${seatName(seat)} 멀미 케어"
         restCard.visibility = if (offer != null) View.VISIBLE else View.GONE

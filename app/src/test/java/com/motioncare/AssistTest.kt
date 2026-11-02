@@ -78,4 +78,10 @@ class AssistTest {
         assertFalse(isUserTemp(21f, 21.05f))
         assertTrue(isUserTemp(21f, 23f))
     }
+
+    @Test fun notFeelingGoodIsNotYes() {
+        assertEquals(false, answer("속이 안 좋아"))
+        assertEquals(false, answer("안 좋아요"))
+        assertEquals(true, answer("좋아 추가해 줘"))
+    }
 }

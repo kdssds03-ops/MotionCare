@@ -125,4 +125,12 @@ class ProfileTest {
         assertFalse(worthKeeping(trip(null).copy(minutes = 0)))
         assertTrue(worthKeeping(trip(null).copy(minutes = 1)))
     }
+
+    @Test fun corruptFileIsKeptAsBackupNotOverwritten() {
+        java.io.File(tmp.root, "profiles.json").writeText("[{oops")
+        val store = ProfileStore(tmp.root)
+        assertEquals(emptyList<Profile>(), store.load())
+        store.save(listOf(base))
+        assertEquals("[{oops", java.io.File(tmp.root, "profiles.json.bad").readText())
+    }
 }
