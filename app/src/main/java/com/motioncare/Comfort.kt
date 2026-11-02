@@ -100,9 +100,7 @@ class Comfort(var sensitivity: Double = 1.0) {
 
     /** 하차 후 MISC(0~10) 피드백으로 민감도 자동 조정 */
     fun feedback(misc: Int) {
-        if (misc >= 4 && maxRisk != Risk.HIGH) sensitivity *= 1.1   // 놓쳤다 → 더 민감하게
-        if (misc <= 1 && maxRisk == Risk.HIGH) sensitivity *= 0.9   // 과잉 경고 → 덜 민감하게
-        sensitivity = sensitivity.coerceIn(0.5, 2.0)
+        sensitivity = adjustSensitivity(sensitivity, misc, maxRisk)
     }
 
     companion object {
