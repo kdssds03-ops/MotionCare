@@ -14,7 +14,8 @@ import android.widget.TextView
 import kotlin.math.ceil
 
 /**
- * 주간 = achromatic-ledger, 야간 = true-black-flat (taste-skill). 색은 데이터에만, 크롬은 무채색.
+ * 차량용 테마: 야간이 기본 인상, 주간도 톤을 낮춘 회색 바탕. 크롬은 무채색, 색은 상태에만.
+ * ACCENT(청록) = 차가 케어하는 중, WARN(주황) = 흔들림 경고·"속이 안 좋아요".
  * Pleos UI 가이드: 대비 4.5:1 이상(UiContrastTest), 텍스트 18sp 이상, 터치 64dp 이상.
  */
 data class Palette(
@@ -23,23 +24,26 @@ data class Palette(
     val primaryBg: Int, val primaryText: Int, val secondaryBg: Int,
     val pos: Int, val posBg: Int, val warn: Int, val warnBg: Int, val neg: Int, val negBg: Int,
     val sickBg: Int, val sickText: Int,
+    val accent: Int, val accentBg: Int,
 ) {
     companion object {
         private fun c(v: Long) = v.toInt()
-        // 값은 octo ui-ux-designer 명세 (대비는 UiContrastTest가 확인)
+        // 대비는 UiContrastTest가 확인
         val DAY = Palette(
-            ground = c(0xFFF8F8F8), surface = c(0xFFFFFFFF), raised = c(0xFFEEEEEE), rule = c(0xFFF0F0F0),
-            text = c(0xFF0A0A0A), muted = c(0xFF5C5C5C), faint = c(0xFF6B6B6B), data = c(0xFF1D5FBF),
-            primaryBg = c(0xFF141414), primaryText = c(0xFFFFFFFF), secondaryBg = c(0xFFE5E5E5),
-            pos = c(0xFF04250E), posBg = c(0xFFDCFAE5), warn = c(0xFF92400E), warnBg = c(0xFFFFFBEB),
-            neg = c(0xFF831C1E), negBg = c(0xFFFFEDEA), sickBg = c(0xFF92400E), sickText = c(0xFFFFFFFF),
+            ground = c(0xFFEEF1F4), surface = c(0xFFFFFFFF), raised = c(0xFFE4E8EC), rule = c(0xFFE3E7EB),
+            text = c(0xFF0B1015), muted = c(0xFF4E5A66), faint = c(0xFF5E6A76), data = c(0xFF1D5FBF),
+            primaryBg = c(0xFF0B1015), primaryText = c(0xFFFFFFFF), secondaryBg = c(0xFFE4E8EC),
+            pos = c(0xFF04250E), posBg = c(0xFFDCFAE5), warn = c(0xFF8A3B0B), warnBg = c(0xFFFFF4E0),
+            neg = c(0xFF831C1E), negBg = c(0xFFFFEDEA), sickBg = c(0xFF8A3B0B), sickText = c(0xFFFFFFFF),
+            accent = c(0xFF0A6E65), accentBg = c(0xFFDDF3F0),
         )
         val NIGHT = Palette(
-            ground = c(0xFF0C0D0F), surface = c(0xFF15171A), raised = c(0xFF25282C), rule = c(0xFF22252A),
-            text = c(0xFFFFFFFF), muted = c(0xFFB4B4B4), faint = c(0xFF949494), data = c(0xFF4CB3F0),
-            primaryBg = c(0xFFFFFFFF), primaryText = c(0xFF0C0D0F), secondaryBg = c(0xFF25282C),
-            pos = c(0xFF3FC07A), posBg = c(0xFF172A1D), warn = c(0xFFE5A93B), warnBg = c(0xFF2B2414),
-            neg = c(0xFFEE6B82), negBg = c(0xFF2C1A20), sickBg = c(0xFFE5A93B), sickText = c(0xFF1A1306),
+            ground = c(0xFF0A0E13), surface = c(0xFF121820), raised = c(0xFF1B232D), rule = c(0xFF232C37),
+            text = c(0xFFF2F5F7), muted = c(0xFFA3AEBA), faint = c(0xFF808C99), data = c(0xFF6AA8FF),
+            primaryBg = c(0xFFF2F5F7), primaryText = c(0xFF0A0E13), secondaryBg = c(0xFF1B232D),
+            pos = c(0xFF3FC07A), posBg = c(0xFF172A1D), warn = c(0xFFF2B14A), warnBg = c(0xFF2B2414),
+            neg = c(0xFFEE6B82), negBg = c(0xFF2C1A20), sickBg = c(0xFFF2B14A), sickText = c(0xFF1E1405),
+            accent = c(0xFF5CD6C8), accentBg = c(0xFF12302F),
         )
         fun of(night: Boolean) = if (night) NIGHT else DAY
     }
@@ -59,21 +63,24 @@ object T {
     val POS_BG get() = p.posBg; val POS get() = p.pos
     val WARN_BG get() = p.warnBg; val WARN get() = p.warn
     val NEG_BG get() = p.negBg; val NEG get() = p.neg
+    val ACCENT get() = p.accent; val ACCENT_BG get() = p.accentBg
 
 
     const val TITLE = 30f; const val SECTION = 24f; const val LEAD = 44f; const val KPI = 36f
+    const val STATE = 64f   // 주행 중 상태 한 마디: 한눈에 읽고 다시 창밖을 보도록 가장 크게 (숫자 아님)
     const val BODY = 20f; const val SMALL = 18f
     const val GAP = 16; const val PAD = 24; const val EDGE = 32; const val RADIUS = 20; const val CONTROL_R = 16
     const val TOUCH = 64; const val PRIMARY_H = 72; const val SICK_H = 88; const val ROW_H = 72   // dp
 }
 
 /** 누르면 즉시(애니메이션 없이) 어두워지는 배경 */
-fun Context.pressable(color: Int, radiusDp: Int, strokeColor: Int = 0) = android.graphics.drawable.StateListDrawable().apply {
+fun Context.pressable(color: Int, radiusDp: Int, strokeColor: Int = 0, strokeDp: Int = 1) = android.graphics.drawable.StateListDrawable().apply {
     val r = dp(radiusDp).toFloat()
+    val sw = if (strokeColor != 0) dp(strokeDp) else 0
     val pressed = blend(color, if (T.p == Palette.NIGHT) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.12f)
-    addState(intArrayOf(android.R.attr.state_pressed), fill(pressed, r, if (strokeColor != 0) dp(1) else 0, strokeColor))
+    addState(intArrayOf(android.R.attr.state_pressed), fill(pressed, r, sw, strokeColor))
     addState(intArrayOf(-android.R.attr.state_enabled), fill(T.RAISED, r))
-    addState(intArrayOf(), fill(color, r, if (strokeColor != 0) dp(1) else 0, strokeColor))
+    addState(intArrayOf(), fill(color, r, sw, strokeColor))
 }
 
 fun Context.icon(res: Int, sizeDp: Int = 28, color: Int = T.TEXT) = android.widget.ImageView(this).apply {
@@ -157,7 +164,7 @@ fun blend(a: Int, b: Int, t: Float): Int {
 
 fun Context.spacer() = View(this)
 
-/** 최근 3분 멀미 위험 지수. 주의·위험 기준선과 케어 실행 시점을 함께 그린다. */
+/** 최근 3분 흔들림 지수. 조금·많이 흔들림 기준선과 케어 실행 시점을 함께 그린다. */
 class TraceView(c: Context) : View(c) {
     val values = FloatArray(CAP)
     var count = 0          // 지금까지 받은 샘플 수
@@ -184,7 +191,8 @@ class TraceView(c: Context) : View(c) {
         val lane = 44 * d                       // y 눈금 자리
         val top = (if (marks.any { it.first > count - CAP }) 34 else 10) * d
         val bottom = height - 30 * d
-        val l = lane; val r = width - 56 * d    // 오른쪽은 기준선 이름 자리
+        val refs = listOf(Comfort.CAUTION_MSDV.toFloat() to riskName(Risk.CAUTION), Comfort.HIGH_MSDV.toFloat() to riskName(Risk.HIGH))
+        val l = lane; val r = width - refs.maxOf { note.measureText(it.second) } - 16 * d   // 오른쪽은 기준선 이름 자리
         var max = 0f; for (i in 0 until n) max = maxOf(max, values[(count - n + i) % CAP])
         val yMax = maxOf(15f, ceil((max + 0.01f) / 5f) * 5f)
         fun y(v: Float) = bottom - (bottom - top) * v / yMax
@@ -196,7 +204,7 @@ class TraceView(c: Context) : View(c) {
             cv.drawText("%.0f".format(t), 4 * d, y(t) + 5 * d, tick)
             t += 5f
         }
-        for ((v, name) in listOf(Comfort.CAUTION_MSDV.toFloat() to "주의", Comfort.HIGH_MSDV.toFloat() to "위험")) {
+        for ((v, name) in refs) {
             cv.drawPath(Path().apply { moveTo(l, y(v)); lineTo(r, y(v)) }, ref)
             cv.drawText(name, r + 8 * d, y(v) + 5 * d, note)
         }
@@ -241,10 +249,10 @@ class TraceView(c: Context) : View(c) {
     companion object { const val CAP = 360 }   // 0.5초 × 360 = 3분
 }
 
-/** 제품 마크: 하늘색 물결 한 줄 */
+/** 제품 마크: 청록 물결 한 줄 */
 class MarkView(c: Context) : View(c) {
     private val d = c.resources.displayMetrics.density
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.DATA; strokeWidth = 3 * d; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.ACCENT; strokeWidth = 3 * d; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.RAISED }
     override fun onDraw(cv: Canvas) {
         val s = width.toFloat()

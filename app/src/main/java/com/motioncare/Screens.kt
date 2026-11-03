@@ -189,7 +189,7 @@ class ReportState(val trip: Trip, val harsh: Int, var misc: Int? = null, val hel
     fun final() = trip.copy(misc = misc, helped = helped.toSet())
 }
 
-fun riskName(r: Risk) = when (r) { Risk.HIGH -> "위험"; Risk.CAUTION -> "주의"; else -> "편안" }
+fun riskName(r: Risk) = when (r) { Risk.HIGH -> "많이 흔들림"; Risk.CAUTION -> "조금 흔들림"; else -> "편안" }
 
 /** 넓으면 a:b 가로, 좁으면 위아래 */
 fun Context.columnsOf(a: View, b: View, wide: Boolean, wa: Float = 1f, wb: Float = 1f) = LinearLayout(this).apply {
@@ -223,17 +223,18 @@ fun Context.report(
         addView(label(T.SECTION, T.TEXT, 600, "이번 주행"))
         addView(LinearLayout(context).apply {
             setPadding(0, dp(T.GAP), 0, 0)
-            listOf("편안함 점수" to "${t.score}", "가장 높았던 단계" to riskName(t.maxRisk), "급조작" to "${r.harsh}회", "주행 시간" to "${t.minutes}분")
-                .forEach { (n, v) -> addView(kpi(n, v), LinearLayout.LayoutParams(0, -2, 1f)) }
+            listOf("편안함 점수" to "${t.score}", "가장 높았던 단계" to riskName(t.maxRisk), "급한 움직임" to "${r.harsh}회", "주행 시간" to "${t.minutes}분")
+                // "많이 흔들림"처럼 긴 단계 이름이 옆 숫자와 붙지 않게 단계 칸을 넓게
+                .forEach { (n, v) -> addView(kpi(n, v), LinearLayout.LayoutParams(0, -2, if (n == "가장 높았던 단계") 1.6f else 1f)) }
         })
     }
     val taxi = card().apply {
-        addView(label(T.SMALL, T.MUTED, 500, "택시 플랫폼 전송 미리보기"))
+        addView(label(T.SMALL, T.MUTED, 500, "택시 연동 미리보기 · 예시"))
         addView(LinearLayout(context).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(8), 0, 0)
-            addView(label(T.BODY, T.TEXT, 500, "점수 ${t.score} · 급조작 ${r.harsh}회 · 최고 ${riskName(t.maxRisk)} · ${t.minutes}분"), LinearLayout.LayoutParams(0, -2, 1f))
-            addView(pill("전송 준비됨", T.POS_BG, T.POS))
+            addView(label(T.BODY, T.TEXT, 500, "편안함 점수 ${t.score} · 급한 움직임 ${r.harsh}회 · ${t.minutes}분 주행"), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(pill("기사님이 공유를 켜면 전송", T.RAISED, T.MUTED))
         })
     }
     val feedback = card().apply {
