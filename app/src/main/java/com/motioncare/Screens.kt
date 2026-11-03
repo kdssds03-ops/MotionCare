@@ -76,40 +76,41 @@ fun Context.riderSelect(
     profiles: List<Profile>, cols: Int,
     onPick: (Profile) -> Unit, onDetail: (Profile) -> Unit, onGuest: () -> Unit, onNew: () -> Unit,
 ): View {
+    // 큰 타일: 이름·자리·최근 점수, 오른쪽에 그 사람이 앉는 자리를 보여 주는 작은 차 그림
     val cards = profiles.map { p ->
         tapCard { onPick(p) }.apply {
             setOnLongClickListener { onDetail(p); true }
             addView(LinearLayout(context).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(avatar(p.name.take(1)))
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(dp(T.GAP), 0, 0, 0)
-                    addView(label(T.SECTION, T.TEXT, 600, p.name))
-                    addView(label(T.SMALL, T.MUTED, 500, seatName(p.seat)))
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-                val last = p.trips.firstOrNull()
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.END
+                    addView(label(T.TITLE, T.TEXT, 700, p.name))
+                    addView(label(T.BODY, T.MUTED, 500, seatName(p.seat)).apply { setPadding(0, dp(4), 0, 0) })
+                    // 고정 간격: 가중치 여백을 쓰면 스크롤 화면에서 타일이 화면 높이만큼 늘어남
+                    addView(View(context), LinearLayout.LayoutParams(1, dp(48)))
+                    val last = p.trips.firstOrNull()
                     if (last != null) {
-                        addView(label(T.KPI, T.TEXT, 700, "${last.score}"))
-                        addView(label(T.SMALL, T.MUTED, 500, "최근 편안함"))
-                    } else addView(label(T.SMALL, T.MUTED, 500, "첫 주행"))
-                })
-            })
+                        addView(label(T.LEAD, T.ACCENT, 700, "${last.score}"))
+                        addView(label(T.SMALL, T.MUTED, 500, "최근 편안함 · 주행 ${p.trips.size}회"))
+                    } else addView(label(T.BODY, T.MUTED, 500, "첫 주행"))
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(CabinView(context).apply { update(p.seat, false, false, 0L, false) }, LinearLayout.LayoutParams(dp(110), dp(192)))
+            }, LinearLayout.LayoutParams(-1, -2))
             addView(button("기록 · 설정") { onDetail(p) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) })
         }
-    } + tapCard { onGuest() }.apply {
-        gravity = Gravity.CENTER_VERTICAL
-        addView(row(icon(R.drawable.ic_person, 32), label(T.SECTION, T.TEXT, 600, "게스트로 시작")))
-        addView(label(T.SMALL, T.MUTED, 500, "기록을 남기지 않아요").apply { setPadding(0, dp(8), 0, 0) })
-    } + tapCard { onNew() }.apply {
-        gravity = Gravity.CENTER_VERTICAL
-        addView(row(icon(R.drawable.ic_add, 32), label(T.SECTION, T.TEXT, 600, "새 프로필")))
-        addView(label(T.SMALL, T.MUTED, 500, "자주 타면 경고 시점과 케어를 맞춰 드려요").apply { setPadding(0, dp(8), 0, 0) })
-    }
+    } + startTile(R.drawable.ic_person, "게스트로 시작", "기록을 남기지 않아요", onGuest) +
+        startTile(R.drawable.ic_add, "새 프로필", "자주 타면 경고 시점과 케어를 맞춰 드려요", onNew)
     return page("누가 타셨나요?", "탑승자를 고르면 바로 주행 화면으로 가요", null, grid(cards, cols))
+}
+
+/** 게스트·새 프로필 타일: 둥근 아이콘 + 이름 + 설명 */
+private fun Context.startTile(iconRes: Int, title: String, sub: String, onClick: () -> Unit) = tapCard { onClick() }.apply {
+    addView(android.widget.FrameLayout(context).apply {
+        background = fill(T.RAISED, dp(999).toFloat())
+        addView(icon(iconRes, 36), android.widget.FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER))
+    }, LinearLayout.LayoutParams(dp(80), dp(80)))
+    addView(View(context), LinearLayout.LayoutParams(1, dp(56)))
+    addView(label(T.TITLE, T.TEXT, 700, title))
+    addView(label(T.BODY, T.MUTED, 500, sub).apply { setPadding(0, dp(6), 0, 0) })
 }
 
 /** 프로필 만들기 입력값 (화면을 다시 그려도 유지) */
@@ -219,14 +220,39 @@ fun Context.report(
     onChange: () -> Unit, onDone: () -> Unit, onSaveGuest: () -> Unit,
 ): View {
     val t = r.trip
+    // 점수 고리 + 세 가지 수치
     val summary = card().apply {
         addView(label(T.SECTION, T.TEXT, 600, "이번 주행"))
         addView(LinearLayout(context).apply {
-            setPadding(0, dp(T.GAP), 0, 0)
-            listOf("편안함 점수" to "${t.score}", "가장 높았던 단계" to riskName(t.maxRisk), "급한 움직임" to "${r.harsh}회", "주행 시간" to "${t.minutes}분")
-                // "많이 흔들림"처럼 긴 단계 이름이 옆 숫자와 붙지 않게 단계 칸을 넓게
-                .forEach { (n, v) -> addView(kpi(n, v), LinearLayout.LayoutParams(0, -2, if (n == "가장 높았던 단계") 1.6f else 1f)) }
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+            addView(ScoreView(context).apply { set(t.score) }, LinearLayout.LayoutParams(dp(240), dp(240)))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(32), 0, 0, 0)
+                listOf("가장 높았던 단계" to riskName(t.maxRisk), "급한 움직임" to "${r.harsh}회", "주행 시간" to "${t.minutes}분").forEachIndexed { i, (n, v) ->
+                    addView(kpi(n, v), LinearLayout.LayoutParams(-1, -2).apply { if (i > 0) topMargin = dp(18) })
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
         })
+    }
+    // 이번 주행에서 차가 한 일: 실행된 케어만, 주행 화면 타일과 같은 아이콘
+    val did = card().apply {
+        addView(label(T.SECTION, T.TEXT, 600, "차가 한 일"))
+        val list = Care.entries.filter { it in t.cares }
+        if (list.isEmpty()) addView(label(T.BODY, T.MUTED, 400, "케어가 필요할 만큼 흔들리지 않았어요").apply { setPadding(0, dp(10), 0, 0) })
+        list.forEach { c ->
+            addView(LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(T.ROW_H)
+                addView(android.widget.FrameLayout(context).apply {
+                    background = fill(T.ACCENT_BG, dp(16).toFloat())
+                    addView(icon(careIcon(c), 30, T.ACCENT), android.widget.FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
+                }, LinearLayout.LayoutParams(dp(56), dp(56)))
+                addView(label(T.BODY, T.TEXT, 600, careName(c)).apply { setPadding(dp(18), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(label(T.BODY, T.ACCENT, 600, careDone(c)))
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        }
     }
     val taxi = card().apply {
         addView(label(T.SMALL, T.MUTED, 500, "택시 연동 미리보기 · 예시"))
@@ -246,7 +272,7 @@ fun Context.report(
                 setPadding(0, dp(12), 0, 0)
                 for (m in 0..5) {
                     val v = range.first + m
-                    val c = if (v in range) chip("$v", r.misc == v) { r.misc = v; onChange() }.apply { setPadding(0, 0, 0, 0) }
+                    val c = if (v in range) chip("$v", r.misc == v) { r.misc = v; onChange() }.apply { setPadding(0, 0, 0, 0); minimumHeight = dp(76) }
                             else android.widget.Space(context)
                     addView(c, LinearLayout.LayoutParams(0, -2, 1f).apply { if (m > 0) marginStart = dp(T.GAP) })
                 }
@@ -275,8 +301,11 @@ fun Context.report(
         addView(button(if (rider != null) "저장하고 완료" else "완료", primary = true, icon = R.drawable.ic_check) { onDone() })
     }
     val sub = "${seatName(rider?.seat ?: Seat.FRONT_RIGHT)} · ${t.minutes}분" + if (t.demo) " · 데모 주행" else ""
-    return page("주행 리포트", sub, null, stack(columnsOf(stack(summary, taxi), stack(feedback, learn), wide), actions))
+    return page("주행 리포트", sub, null, stack(columnsOf(stack(summary, did, taxi), stack(feedback, learn), wide), actions))
 }
+
+fun careIcon(c: Care) = when (c) { Care.AIR -> R.drawable.ic_wind; Care.BREATH -> R.drawable.ic_breath; Care.TURN_CUE -> R.drawable.ic_turn; Care.RECLINE -> R.drawable.ic_seat }
+fun careDone(c: Care) = when (c) { Care.AIR -> "바깥 공기 넣음"; Care.BREATH -> "조명으로 호흡 안내"; Care.TURN_CUE -> "회전 미리 알림"; Care.RECLINE -> "등받이 젖힘" }
 
 // --- 프로필 상세 ---
 

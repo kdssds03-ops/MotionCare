@@ -199,3 +199,30 @@ class GaugeView(c: Context) : View(c) {
 
     companion object { const val MAX = 15.0 }
 }
+
+/** 편안함 점수 고리: 0~100을 270° 호로, 가운데 숫자와 이름 */
+class ScoreView(c: Context) : View(c) {
+    var score = 0
+    private val d = c.resources.displayMetrics.density
+    private val sp = c.resources.displayMetrics.scaledDensity
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val big = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; fontFeatureSettings = "tnum"; typeface = Typeface.create(Typeface.DEFAULT, 700, false) }
+    private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val r = RectF()
+
+    fun set(s: Int) { score = s.coerceIn(0, 100); contentDescription = "편안함 점수 ${score}점"; invalidate() }
+
+    override fun onDraw(cv: Canvas) {
+        val w = 18 * d
+        val rad = min(width, height) / 2f - w
+        val cx = width / 2f; val cy = height / 2f + rad * 0.1f
+        r.set(cx - rad, cy - rad, cx + rad, cy + rad)
+        arc.strokeWidth = w
+        arc.color = T.RAISED; cv.drawArc(r, 135f, 270f, false, arc)
+        if (score > 0) { arc.color = T.ACCENT; cv.drawArc(r, 135f, 270f * score / 100f, false, arc) }
+        big.color = T.TEXT; big.textSize = min(rad * 0.7f, 84 * sp)
+        cv.drawText("$score", cx, cy + big.textSize * 0.3f, big)
+        txt.color = T.MUTED; txt.textSize = T.BODY * sp
+        cv.drawText("편안함 점수", cx, cy + big.textSize * 0.3f + 34 * d, txt)
+    }
+}
