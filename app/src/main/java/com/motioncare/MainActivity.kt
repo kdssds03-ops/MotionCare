@@ -79,6 +79,7 @@ class MainActivity : Activity() {
     private var liveHeading: Double? = null
     private var liveSteer: Double? = null
     private var demo: Iterator<DemoTick>? = null
+    private var demoCourse: DemoCourse? = null
     private var tripOn = false
     private var tripEnded = false
     private var tripStartMs = 0L
@@ -448,7 +449,7 @@ class MainActivity : Activity() {
 
     /** 바람 케어: 외기 유입 + 풍량 올리기 + 온도 살짝 낮추기 (D'Amour 2017) */
     private fun airCare(quiet: Boolean = false) {
-        if (!quiet) say("멀미 위험이 올라가고 있어요. 바깥 공기를 넣고 바람을 조금 세게 할게요. 앞쪽 창밖을 바라봐 주세요.")
+        if (!quiet) say("흔들림이 커지고 있어요. 바깥 공기를 넣고 바람을 조금 세게 할게요. 앞쪽 창밖을 바라봐 주세요.")
         caresThisTrip += Care.AIR
         airAt = comfort.durationS
         trace.mark("공기 케어")
@@ -478,18 +479,35 @@ class MainActivity : Activity() {
 
     /** 호흡 가이드: 조명 4초 밝게(들숨) / 4초 어둡게(날숨), 분당 7.5회 (Stromberg 2015) */
     private fun breathing(quiet: Boolean = false) {
+        // 이미 진행 중이면 다시 예약하지 않음: 여러 번 누르면 밝기 일정이 겹쳐 조명이 엉킴
+        if (breathActive()) return
         if (!quiet) say("천천히 숨 쉬어 볼게요. 조명이 밝아지면 들이쉬고, 어두워지면 내쉬세요.")
         caresThisTrip += Care.BREATH
         breathUntilMs = System.currentTimeMillis() + 60_000
         if (tripOn) trace.mark("호흡 가이드")
-        val light = vehicle.getLight()
-        for (i in 0 until 15) ui.postDelayed({
-            ambient.forEach { (area, range) ->
-                val v = if (i == 14) (range.first + range.last) / 2 else if (i % 2 == 0) range.last else range.first
-                light.setAmbientLightBrightness(area, v, { _, _ -> }, ::fail)
-            }
-        }, i * 4000L)
+        for (i in 0 until 15) ui.postDelayed({ setAmbient(if (i == 14) null else i % 2 == 0) }, BREATH_TOKEN, i * 4000L)
         render()
+    }
+
+    private fun breathActive() = breathUntilMs > System.currentTimeMillis()
+
+    /** 호흡 가이드 멈추기: 남은 밝기 일정을 지우고 조명을 중간 밝기로 */
+    private fun stopBreathing() {
+        ui.removeCallbacksAndMessages(BREATH_TOKEN)
+        breathUntilMs = 0L
+        setAmbient(null)
+        render()
+    }
+
+    private fun toggleBreathing() = if (breathActive()) stopBreathing() else breathing()
+
+    /** 앰비언트 밝기: true = 최대(들숨), false = 최소(날숨), null = 중간 */
+    private fun setAmbient(bright: Boolean?) {
+        val light = vehicle.getLight()
+        ambient.forEach { (area, range) ->
+            val v = when (bright) { true -> range.last; false -> range.first; null -> (range.first + range.last) / 2 }
+            light.setAmbientLightBrightness(area, v, { _, _ -> }, ::fail)
+        }
     }
 
     /**
@@ -557,7 +575,8 @@ class MainActivity : Activity() {
             breath -> "바로 도와드릴게요. 조명에 맞춰 천천히 숨 쉬어 볼게요."
             else -> "알겠어요. 가까운 휴게소를 찾아볼게요."
         })
-        if (air) airCare(quiet = true)
+        // 1분 안에 이미 공기 케어를 했으면 공조 명령을 다시 보내지 않음 (반복 터치 대비)
+        if (air && airAt?.let { comfort.durationS - it < 60 } != true) airCare(quiet = true)
         if (breath) breathing(quiet = true)
         // 첫 안내가 끝난 뒤 휴게소를 물어봄
         ui.removeCallbacks(askRest)
@@ -581,7 +600,7 @@ class MainActivity : Activity() {
         if (lat != null && hit == null) say("근처에 휴게소가 없어요. 케어는 계속할게요.")
         if (hit != null) {
             val km = hit.second.roundToInt()
-            say((if (reason == "high") "멀미 위험이 계속 높아요. " else "") + "가까운 휴게소는 약 ${km}km 거리의 ${hit.first.name}입니다. 경유지로 추가할까요?")
+            say((if (reason == "high") "많이 흔들리는 상태가 계속되고 있어요. " else "") + "가까운 휴게소는 약 ${km}km 거리의 ${hit.first.name}입니다. 경유지로 추가할까요?")
         }
         render()
     }
@@ -642,10 +661,33 @@ class MainActivity : Activity() {
 
     // --- 주행 시작/종료 ---
 
-    private fun startTrip(withDemo: Boolean) {
+    /** 데모 코스 고르기: 운전 방식에 따라 점수가 어떻게 달라지는지 보여 줌 (앱과 같은 타일로 만든 창) */
+    private fun pickDemoCourse() {
+        val dlg = android.app.Dialog(this)
+        val icons = mapOf(DemoCourse.SMOOTH to R.drawable.ic_check, DemoCourse.WINDING to R.drawable.ic_turn, DemoCourse.CITY to R.drawable.ic_rest)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = fill(T.GROUND, dp(28).toFloat())
+            setPadding(dp(32), dp(28), dp(32), dp(28))
+            addView(label(T.TITLE, T.TEXT, 700, "데모 코스를 고르세요"))
+            addView(label(T.SMALL, T.MUTED, 400, "같은 계산식으로 운전 방식만 달라요 · 매번 조금씩 다르게 달려요").apply { setPadding(0, dp(6), 0, dp(6)) })
+            addView(tileList(null, DemoCourse.entries.map { c ->
+                tile(icons.getValue(c), c.title, label(T.SMALL, T.MUTED, 400, c.sub), { dlg.dismiss(); startTrip(true, c) })
+            }), LinearLayout.LayoutParams(-1, -2))
+            addView(bigButton("취소", 1) { dlg.dismiss() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
+        }
+        dlg.setContentView(box)
+        dlg.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        dlg.window?.setLayout(dp(720), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+        dlg.show()
+    }
+
+    private fun startTrip(withDemo: Boolean, course: DemoCourse = DemoCourse.CITY) {
         comfort = Comfort(comfort.sensitivity)
         risk = Risk.LOW
-        demo = if (withDemo) demoDrive(DT).iterator() else null
+        // 데모도 매번 조금씩 다르게 (실제 주행처럼). 코스 성격은 그대로.
+        demo = if (withDemo) demoDrive(DT, course, kotlin.random.Random(System.nanoTime())).iterator() else null
+        demoCourse = if (withDemo) course else null
         tripOn = true; tripEnded = false
         tripStartMs = System.currentTimeMillis()
         resetTripState()
@@ -667,7 +709,7 @@ class MainActivity : Activity() {
         store.saveOngoing(null)
         ui.removeCallbacks(askRest); offer = null
         tripOn = false; tripEnded = true
-        val trip = Trip(tripStartMs, (comfort.durationS / 60).roundToInt(), comfort.score(), comfort.maxRisk,
+        val trip = Trip(tripStartMs, tripMinutes(comfort.durationS), comfort.score(), comfort.maxRisk,
             null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
         demo = null
         report = ReportState(trip, comfort.harshEvents)
@@ -682,228 +724,182 @@ class MainActivity : Activity() {
     }
 
     // --- 화면 ---
+    // 주행 전·주행 중 모두 같은 틀: 머리줄 · 왼쪽 한 마디 · 가운데 그림 · 오른쪽 타일 · 아래 큰 버튼 줄.
+    // 주행 중에는 그래프·수치 대신 상태 한 마디와 차 그림만: 화면을 오래 보면 멀미가 심해짐.
 
-    private lateinit var scope: TextView
-    private lateinit var backBtn: LinearLayout
-    private lateinit var finding: TextView
-    private lateinit var startBtn: LinearLayout
-    private lateinit var demoBtn: LinearLayout
-    private lateinit var riskValue: TextView
-    private lateinit var riskPill: TextView
-    private lateinit var riskNote: TextView
-    // 그래프는 화면을 다시 그려도 기록이 남도록 한 번만 만듦
+    // 그래프 뷰는 화면에 보이지 않지만, 최근 3분 값으로 "나아지고 있어요"를 판단하고 케어 시점을 표시함
     private val trace by lazy { TraceView(this) }
-    private lateinit var airState: TextView
-    private lateinit var airSub: TextView
-    private lateinit var breathBtn: LinearLayout
-    private lateinit var turnState: TextView
-    private lateinit var coachState: TextView
-    private lateinit var reclineBtn: LinearLayout
-    private lateinit var reclineSub: TextView
-    private lateinit var careFoot: TextView
-    private lateinit var scoreV: TextView
-    private lateinit var harshV: TextView
-    private lateinit var maxV: TextView
-    private lateinit var timeV: TextView
-    private val sensBtns = ArrayList<Pair<Double, TextView>>()
+    private lateinit var statusV: TextView
+    private lateinit var scope: TextView
+    private var backBtn: View? = null
+    private lateinit var endBtn: LinearLayout
+    private lateinit var preView: View
+    private lateinit var tripView: View
+    // 주행 전
+    private lateinit var gauge: GaugeView
+    private lateinit var sensBox: LinearLayout
     private lateinit var riderNote: TextView
-    private var detailBtn: LinearLayout? = null
-    private lateinit var titleV: TextView
-    private lateinit var reclineRow: View
-    private lateinit var micBtn: LinearLayout
+    private var detailBtn: View? = null
+    private lateinit var preFoot: TextView
+    private lateinit var preAir: LinearLayout
+    private lateinit var preAirSub: TextView
+    private lateinit var preBreath: LinearLayout
+    private lateinit var preBreathSub: TextView
+    private lateinit var preRecline: LinearLayout
+    private lateinit var preReclineSub: TextView
+    // 주행 중
+    private lateinit var stateTag: TextView
+    private lateinit var stateDot: View
+    private lateinit var stateWord: TextView
+    private lateinit var stateCare: TextView
+    private lateinit var stateFoot: TextView
+    private lateinit var chipValue: TextView
+    private lateinit var chipName: TextView
+    private lateinit var cabin: CabinView
+    private lateinit var breathView: BreathView
+    private lateinit var airTile: LinearLayout
+    private lateinit var airTileSub: TextView
+    private lateinit var breathTile: LinearLayout
+    private lateinit var breathTileSub: TextView
+    private lateinit var reclineTile: LinearLayout
+    private lateinit var turnTile: LinearLayout
+    private lateinit var turnTileSub: TextView
+    // 아래
     private lateinit var restCard: LinearLayout
     private lateinit var restText: TextView
     private lateinit var noteV: TextView
+    private lateinit var startBtn: LinearLayout
+    private lateinit var demoBtn: LinearLayout
+    private lateinit var sickBtn: LinearLayout
+    private lateinit var micBtn: LinearLayout
+    private var sickWide: Boolean? = null   // 주행 중이면 "속이 안 좋아요"가 아래 줄을 넓게 차지
 
     private fun buildUi(): View {
-        sensBtns.clear()
         (trace.parent as? android.view.ViewGroup)?.removeView(trace)
-        val g = dp(T.GAP)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(T.GROUND)
-            setPadding(dp(29), dp(20), dp(29), 0)
-        }
-        // 휴게소 제안·안내·"속이 안 좋아요"는 스크롤 밖 하단에 고정 (항상 보이게)
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(29), 0, dp(29), dp(24))
-        }
-
-        // 상단: 제품 마크와 이름, 오른쪽에 대상 좌석과 민감도
-        scope = label(T.SMALL, T.MUTED)
-        root.addView(LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            backBtn = button("탑승자", icon = R.drawable.ic_back) { onBackPressed() }.apply { minimumWidth = 0 }
-            addView(backBtn, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(T.GAP) })
-            addView(MarkView(context), LinearLayout.LayoutParams(dp(32), dp(32)))
-            addView(label(T.SECTION, T.TEXT, 600, "멀미케어").apply { setPadding(dp(12), 0, 0, 0) })
-            addView(spacer(), LinearLayout.LayoutParams(0, 1, 1f))
-            addView(scope)
-        })
-
-        // 제목 줄: 화면 이름 + 지금의 발견, 오른쪽에 주행 버튼
-        finding = label(T.BODY, T.MUTED)
-        startBtn = button("주행 시작", primary = true) { if (tripOn) endTrip() else startTrip(false) }
-        demoBtn = button("데모 주행") { startTrip(true) }
-        root.addView(LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(24), 0, dp(20))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                titleV = label(T.TITLE, T.TEXT, 600)
-                addView(titleV)
-                addView(finding.apply { setPadding(0, dp(6), 0, 0) })
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(row(demoBtn, startBtn, gap = 12))
-        })
-
-        // 1행: 위험 지수(2/3) | 케어(1/3)
-        riskValue = label(T.LEAD, T.TEXT, 500)
-        riskPill = pill("", 0, 0)
-        riskNote = label(T.SMALL, T.MUTED)
-        val riskCard = card().apply {
-            addView(LinearLayout(context).apply {
-                addView(label(T.SECTION, T.TEXT, 500, "멀미 위험 지수"), LinearLayout.LayoutParams(0, -2, 1f))
-                addView(label(T.SMALL, T.FAINT, 400, "누적 흔들림 · 멈추면 서서히 내려가요 · ISO 2631-1"))
-            })
-            addView(row(riskValue, riskPill, gap = 14).apply { setPadding(0, dp(10), 0, 0) })
-            addView(riskNote)
-            // 그래프가 카드의 남는 높이를 채움 (최소 280)
-            addView(trace, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(14) })
-            trace.minimumHeight = dp(280)
-        }
-
-        airState = label(T.SMALL, T.MUTED)
-        airSub = label(T.SMALL, T.MUTED)
-        breathBtn = button("시작") { breathing() }
-        turnState = label(T.SMALL, T.MUTED)
-        coachState = label(T.SMALL, T.MUTED)
-        reclineBtn = button("젖히기") { recline() }
-        careFoot = label(T.SMALL, T.FAINT).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }   // 3줄 이내 규칙
-        val careCard = card().apply {
-            addView(label(T.SECTION, T.TEXT, 500, "지금 하는 케어"))
-            // 다섯 줄이 카드 높이에 고르게 퍼져서 아래에 빈 띠가 남지 않게
-            val each = { v: View -> addView(v, LinearLayout.LayoutParams(-1, 0, 1f)) }
-            each(careRow("공기 케어", airSub, airState, first = true))
-            each(careRow("호흡 가이드", label(T.SMALL, T.MUTED, 400, "조명이 밝아지면 들숨, 어두워지면 날숨"), breathBtn))
-            each(careRow("회전 예고", label(T.SMALL, T.MUTED, 400, "방향지시등이 켜지면 음성으로 알려요"), turnState))
-            each(careRow("운전자 안내", label(T.SMALL, T.MUTED, 400, "급조작 시 30초에 한 번까지"), coachState))
-            reclineSub = label(T.SMALL, T.MUTED)
-            reclineRow = careRow("등받이", reclineSub, reclineBtn)
-            each(reclineRow)
-            addView(careFoot.apply { setPadding(0, dp(12), 0, 0) })
-        }
-        // 1행이 창의 남는 높이를 모두 차지해서 바닥에 빈 띠가 생기지 않게
         val wide = columns() > 1
-        root.addView(pair(riskCard, careCard, wide), LinearLayout.LayoutParams(-1, if (wide) 0 else -2, 1f))
+        val seat = rider?.seat ?: Seat.FRONT_RIGHT
+        sickWide = null
 
-        // 2행: 이번 주행(2/3) | 탑승자(1/3)
-        scoreV = label(T.KPI, T.TEXT, 500); harshV = label(T.KPI, T.TEXT, 500)
-        maxV = label(T.KPI, T.TEXT, 500); timeV = label(T.KPI, T.TEXT, 500)
-        val tripCard = card().apply {
-            addView(label(T.SECTION, T.TEXT, 500, "이번 주행"))
-            addView(LinearLayout(context).apply {
-                setPadding(0, dp(14), 0, dp(18))
-                listOf("편안함 점수" to scoreV, "급조작" to harshV, "가장 높았던 단계" to maxV, "주행 시간" to timeV)
-                    .forEachIndexed { i, (name, v) ->
-                        if (i > 0) addView(View(context).apply { setBackgroundColor(T.RULE) }, LinearLayout.LayoutParams(dp(1), -1).apply { marginEnd = dp(20) })
-                        addView(LinearLayout(context).apply {
-                            orientation = LinearLayout.VERTICAL
-                            addView(label(T.SMALL, T.MUTED, 400, name)); addView(v)
-                        }, LinearLayout.LayoutParams(0, -2, 1f))
-                    }
-            })
-            addView(label(T.SMALL, T.MUTED, 400, "주행이 끝나면 리포트에서 멀미를 묻고 다음 주행에 반영해요"))
+        statusV = label(T.SECTION, T.MUTED, 400)
+        scope = headerChip("")
+        // 주행 종료는 길게 눌러야 함: 흔들리는 차에서 잘못 누르거나 시작 직후 두 번 눌러도 끝나지 않게
+        endBtn = button("길게 눌러 주행 종료") {
+            assistNote = HOLD_NOTE; render()
+            ui.postDelayed({ if (assistNote == HOLD_NOTE) { assistNote = null; render() } }, 4000)
+        }.apply {
+            setOnLongClickListener { if (tripOn) { if (assistNote == HOLD_NOTE) assistNote = null; endTrip() }; true }
+            contentDescription = "주행 종료. 길게 누르세요"
         }
+        val head = header("탑승자" to { onBackPressed() }, statusV, scope, endBtn)
+        backBtn = head.findViewWithTag("back")
 
-        riderNote = label(T.SMALL, T.MUTED)
-        val sensRow = LinearLayout(this).apply {
-            background = fill(T.RAISED, dp(999).toFloat())
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            SENS.forEach { (v, name) ->
-                val b = label(T.BODY, T.TEXT, 500, name).apply {
-                    gravity = Gravity.CENTER; minHeight = dp(T.TOUCH)
-                    setOnClickListener { setSensitivity(v) }
-                }
-                sensBtns += v to b
-                addView(b, LinearLayout.LayoutParams(0, -2, 1f))
-            }
-        }
-        val riderCard = card().apply {
-            addView(label(T.SECTION, T.TEXT, 500, rider?.name ?: "게스트"))
-            addView(label(T.SMALL, T.MUTED, 400, "멀미 민감도").apply { setPadding(0, dp(14), 0, dp(8)) })
-            addView(sensRow)
-            addView(riderNote.apply { setPadding(0, dp(12), 0, 0) })
+        // --- 주행 전: 준비 한 마디 + 민감도 | 대기 게이지 | 차가 알아서 하는 일 ---
+        sensBox = LinearLayout(this)
+        riderNote = label(T.SMALL, T.FAINT)
+        preFoot = label(T.SMALL, T.FAINT).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+        val preLeft = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(hero("${seatName(seat)} · 차량 연결됨", "출발할\n준비가 됐어요", "흔들림이 커지면 차가 먼저 챙겨요"))
+            addView(label(T.BODY, T.MUTED, 500, "멀미 민감도").apply { setPadding(0, dp(36), 0, dp(10)) })
+            addView(sensBox, LinearLayout.LayoutParams(-1, -2))
+            addView(riderNote.apply { setPadding(0, dp(10), 0, 0) })
             // 주행 중에는 숨김: 상세 화면의 시작·삭제가 진행 중 주행을 초기화하거나 게스트로 바꿀 수 있음
-            detailBtn = rider?.let { p -> button("기록 · 설정") { show(Screen.ProfileDetail(p.id)) }.also { addView(it, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) }) } }
+            detailBtn = rider?.let { p -> button("기록 · 설정") { show(Screen.ProfileDetail(p.id)) }.also {
+                addView(it, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(T.GAP) })
+            } }
+            addView(preFoot, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) })
         }
-        root.addView(pair(tripCard, riderCard, wide), LinearLayout.LayoutParams(-1, -2).apply { topMargin = g })
+        gauge = GaugeView(this)
+        val preCenter = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(gauge, LinearLayout.LayoutParams(-1, dp(420)))
+            addView(label(T.SMALL, T.FAINT, 400, "ISO 2631-1 기준 · 주행하면 바로 재기 시작해요").apply { gravity = Gravity.CENTER })
+        }
+        preAirSub = label(T.SMALL, T.MUTED); preBreathSub = label(T.SMALL, T.MUTED); preReclineSub = label(T.SMALL, T.MUTED)
+        preAir = tile(R.drawable.ic_wind, "공기 케어", preAirSub)
+        preBreath = tile(R.drawable.ic_breath, "호흡 가이드", preBreathSub, { toggleBreathing() })
+        val preTurn = tile(R.drawable.ic_turn, "회전 예고", label(T.SMALL, T.MUTED, 400, "돌기 전에 음성으로 알려요"))
+        preRecline = tile(R.drawable.ic_seat, "등받이 젖히기", preReclineSub, { recline() })
+        preView = threeCols(preLeft, preCenter, tileList("차가 알아서 하는 일", listOf(preAir, preBreath, preTurn, preRecline)), wide)
 
-        // 휴게소 제안 카드 (제안 중일 때만)
+        // --- 주행 중: 상태 한 마디 | 차 실내 그림(호흡 가이드 중에는 호흡 원) | 케어 타일 ---
+        stateDot = View(this).apply { background = fill(T.ACCENT, dp(999).toFloat()) }
+        stateTag = label(T.BODY, T.ACCENT, 600)
+        stateWord = label(T.STATE, T.TEXT, 700).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        stateCare = label(T.SECTION, T.TEXT, 500).apply { setLineSpacing(0f, 1.2f) }
+        stateFoot = label(T.SMALL, T.FAINT).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+        chipValue = label(T.LEAD, T.WARN, 700)
+        chipName = label(T.SECTION, T.WARN, 600)
+        val tripLeft = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(stateDot, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginEnd = dp(10) })
+                addView(stateTag)
+            })
+            addView(stateWord.apply { setPadding(0, dp(10), 0, 0) })
+            addView(stateCare.apply { setPadding(0, dp(14), 0, 0) })
+            addView(label(T.BODY, T.MUTED, 400, "화면보다 앞쪽 창밖을 보면 덜 어지러워요").apply { setPadding(0, dp(10), 0, 0) })
+            // 흔들림 지수 한 칸: 숫자 + 단계 이름
+            addView(LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                background = fill(T.SURFACE, dp(T.RADIUS).toFloat())
+                setPadding(dp(24), dp(16), dp(24), dp(16))
+                addView(chipValue)
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(18), 0, 0, 0)
+                    addView(chipName)
+                    addView(label(T.SMALL, T.MUTED, 400, "흔들림 지수 · 10부터 호흡 가이드"))
+                })
+            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(36) })
+            addView(stateFoot, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        }
+        cabin = CabinView(this)
+        breathView = BreathView(this)
+        val tripCenter = android.widget.FrameLayout(this).apply {
+            addView(cabin, android.widget.FrameLayout.LayoutParams(-1, -1))
+            addView(breathView, android.widget.FrameLayout.LayoutParams(-1, -1))
+            minimumHeight = dp(440)
+        }
+        airTileSub = label(T.SMALL, T.MUTED); breathTileSub = label(T.SMALL, T.MUTED); turnTileSub = label(T.SMALL, T.MUTED)
+        airTile = tile(R.drawable.ic_wind, "공기 케어", airTileSub)
+        breathTile = tile(R.drawable.ic_breath, "호흡 가이드", breathTileSub, { toggleBreathing() })
+        reclineTile = tile(R.drawable.ic_seat, "등받이 젖히기", label(T.SMALL, T.MUTED, 400, "조금 젖히면 덜 흔들려요"), { recline() })
+        turnTile = tile(R.drawable.ic_turn, "회전 예고", turnTileSub)
+        tripView = threeCols(tripLeft, tripCenter, tileList(null, listOf(airTile, breathTile, reclineTile, turnTile)), wide)
+
+        val body = android.widget.FrameLayout(this).apply {
+            addView(preView, android.widget.FrameLayout.LayoutParams(-1, -1))
+            addView(tripView, android.widget.FrameLayout.LayoutParams(-1, -1))
+        }
+
+        // --- 아래: 휴게소 제안 · 한 줄 안내 · 큰 버튼 줄 (스크롤 밖에 고정, 항상 보이게) ---
+        val g = dp(T.GAP)
         restText = label(T.SECTION, T.TEXT, 600)
-        restCard = card().apply {
+        restCard = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            background = fill(T.SURFACE, dp(T.RADIUS).toFloat())
+            setPadding(dp(T.PAD), dp(T.PAD - 4), dp(T.PAD), dp(T.PAD - 4))
             addView(row(icon(R.drawable.ic_rest, 32), restText), LinearLayout.LayoutParams(if (wide) 0 else -1, -2, 1f))
             addView(row(button("괜찮아요") { acceptRest(false) }, button("경유지 추가", primary = true, icon = R.drawable.ic_add) { acceptRest(true) }).apply {
                 if (!wide) setPadding(0, g, 0, 0)
             })
         }
-        bottom.addView(restCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-
-        // 맨 아래: 한 줄 안내 + "속이 안 좋아요" + 마이크
         noteV = label(T.BODY, T.TEXT, 500).apply { setPadding(dp(4), 0, 0, 0) }
-        bottom.addView(noteV, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        val sick = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
-            minimumHeight = dp(T.SICK_H)
-            background = pressable(T.p.sickBg, T.CONTROL_R)
-            addView(icon(R.drawable.ic_wind, 32, T.p.sickText).apply { (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(12) })
-            addView(label(T.SECTION, T.p.sickText, 700, "속이 안 좋아요"))
-            isClickable = true
-            setOnClickListener { sickNow() }
-        }
-        micBtn = button("말하기", icon = R.drawable.ic_mic) { listen() }.apply { minimumHeight = dp(T.SICK_H) }
-        bottom.addView(LinearLayout(this).apply {
-            addView(sick, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(micBtn, LinearLayout.LayoutParams(-2, -1).apply { marginStart = g })
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-
-        return LinearLayout(this).apply {
+        startBtn = bigButton("주행 시작", 0) { if (!tripOn) startTrip(false) }
+        demoBtn = bigButton("데모 주행", 1) { if (!tripOn) pickDemoCourse() }
+        sickBtn = bigButton("속이 안 좋아요", 2, R.drawable.ic_wind) { sickNow() }
+        micBtn = bigButton("말하기", 1, R.drawable.ic_mic) { listen() }
+        val footer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(T.GROUND)
-            addView(ScrollView(context).apply { isFillViewport = true; addView(root) }, LinearLayout.LayoutParams(-1, 0, 1f))
-            addView(bottom)
+            addView(restCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+            addView(noteV, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+            addView(buttonBar(startBtn to 0, demoBtn to 260, sickBtn to 300, micBtn to 220))
         }
-    }
-
-    /** 넓으면 2:1 가로 배치, 좁으면(세로 화면) 위아래로 쌓기 */
-    private fun pair(a: View, b: View, wide: Boolean) = LinearLayout(this).apply {
-        orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        if (wide) {
-            addView(a, LinearLayout.LayoutParams(0, -1, 2f))
-            addView(b, LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = dp(T.GAP) })
-        } else {
-            addView(a, LinearLayout.LayoutParams(-1, -2))
-            addView(b, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(T.GAP) })
-        }
-    }
-
-    /** 케어 카드 한 줄: 이름과 설명, 오른쪽에 상태나 버튼 */
-    private fun careRow(name: String, sub: TextView, right: View, first: Boolean = false) = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        if (!first) addView(View(context).apply { setBackgroundColor(T.RULE) }, LinearLayout.LayoutParams(-1, dp(1)))
-        addView(LinearLayout(context).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, dp(10))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(label(T.BODY, T.TEXT, 500, name))
-                addView(sub)
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(right)
-        }, LinearLayout.LayoutParams(-1, 0, 1f))
+        return frame(head, body, footer)
     }
 
     private fun ago(s: Double) = (comfort.durationS - s).toInt().coerceAtLeast(0).let { "%d:%02d 전".format(it / 60, it % 60) }
@@ -913,76 +909,57 @@ class MainActivity : Activity() {
         val idx = comfort.windowMsdv * comfort.sensitivity
         val started = tripOn || tripEnded
         val sensName = SENS.minBy { abs(it.first - comfort.sensitivity) }.second
-        scope.text = (rider?.let { "${it.name} · ${seatName(it.seat)}" } ?: "게스트 · 기록 안 남김") + " · 민감도 $sensName"
-        backBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
-        detailBtn?.visibility = if (tripOn) View.GONE else View.VISIBLE
         val seat = rider?.seat ?: Seat.FRONT_RIGHT
-        titleV.text = "${seatName(seat)} 멀미 케어"
+        scope.text = (rider?.name ?: "게스트 · 기록 안 남김") + " · 민감도 $sensName"
+        backBtn?.visibility = if (tripOn) View.GONE else View.VISIBLE
+        endBtn.visibility = if (tripOn) View.VISIBLE else View.GONE
+        detailBtn?.visibility = if (tripOn) View.GONE else View.VISIBLE
         restCard.visibility = if (offer != null) View.VISIBLE else View.GONE
         offer?.let { (a, km) -> restText.text = "${a.name} · 약 ${km.roundToInt()}km · 경유지로 추가할까요?" }
         noteV.text = assistNote ?: ""
         noteV.visibility = if (assistNote != null) View.VISIBLE else View.GONE
         micBtn.buttonText = if (listening) "듣는 중" else "말하기"
-        // 좌석이 등받이 이동을 지원하지 않으면 줄을 숨김 (지원 목록을 모르면 보여줌)
-        reclineRow.visibility = if (reclineAreas?.any { careSeat() in it.values } == false) View.GONE else View.VISIBLE
-
-        // 20초(40샘플) 전보다 낮으면 회복 중
-        val falling = trace.count > 40 && idx < trace.values[(trace.count - 41) % TraceView.CAP] - 0.05
-        finding.text = when {
-            tripEnded -> "주행 종료 · 편안함 점수 ${comfort.score()}점, 급조작 ${comfort.harshEvents}회"
-            !tripOn -> "주행 전 · 차량 연결됨"
-            falling && risk != Risk.LOW -> "흔들림이 줄어 회복 중이에요 · 케어는 계속하고 있어요"
-            risk == Risk.HIGH -> "멀미 위험 단계 · 호흡 가이드와 공기 케어를 하고 있어요"
-            risk == Risk.CAUTION -> "흔들림이 커지고 있어요 · 바깥 공기를 넣는 중"
-            else -> "흔들림이 적어요 · 주의 단계(6)까지 %.1f 남음".format((Comfort.CAUTION_MSDV - idx).coerceAtLeast(0.0))
-        }
-        startBtn.buttonText = if (tripOn) "주행 종료" else "주행 시작"
-        demoBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
-
-        riskValue.text = if (started) "%.1f".format(idx) else "—"
-        val (pText, pBg, pInk) = when {
-            !started -> Triple("대기", T.RAISED, T.MUTED)
-            tripEnded -> Triple("주행 종료", T.RAISED, T.MUTED)
-            risk == Risk.HIGH -> Triple("위험", T.NEG_BG, T.NEG)
-            risk == Risk.CAUTION -> Triple("주의", T.WARN_BG, T.WARN)
-            else -> Triple("편안", T.POS_BG, T.POS)
-        }
-        riskPill.text = pText; riskPill.setTextColor(pInk); riskPill.background = fill(pBg, dp(999).toFloat())
-        riskNote.text = when {
-            !started -> "주의 6 · 위험 10부터 자동 케어가 시작돼요"
-            tripEnded -> "주행이 끝난 시점의 값 · 주의 6 · 위험 10"
-            else -> "주의 6 · 위험 10 · 민감도 %.2f 반영".format(comfort.sensitivity)
-        }
-
-        airSub.text = when {
-            airAt == null -> "주의 단계가 되면 바깥 공기를 넣어요"
-            else -> "외기 · " + (airFan?.let { "풍량 ${it}단 · " } ?: "") + "%.1f°C".format(careTemp())
-        }
-        airState.text = airAt?.let { ago(it) } ?: "대기"
-        val breathLeft = ((breathUntilMs - System.currentTimeMillis()) / 1000).toInt()
-        breathBtn.buttonText = if (breathLeft > 0) "%d:%02d 남음".format(breathLeft / 60, breathLeft % 60) else "시작"
-        turnState.text = turnAt?.let { (if (turnDir < 0) "왼쪽 · " else "오른쪽 · ") + ago(it) } ?: "—"
-        coachState.text = if (started) "${coachCount}회" else "—"
-        // 등받이: P단이 아니면 버튼을 흐리게 하고 이유를 보여줌
-        val seatLocked = parked == false
-        reclineSub.text = if (seatLocked) "주행 중에는 시트를 움직일 수 없어요" else "${seatName(seat)} 등받이를 조금 젖혀요"
-        reclineBtn.buttonText = when { reclined -> "젖혔어요"; seatLocked -> "P단에서 가능"; else -> "젖히기" }
-        reclineBtn.isEnabled = !seatLocked || reclined
-        careFoot.text = problem?.let { "차량 응답: $it" } ?: if (lastSpoken.isEmpty()) "" else "마지막 음성 · $lastSpoken"
-        careFoot.setTextColor(if (problem != null) T.NEG else T.FAINT)
-
-        scoreV.text = if (started) "${comfort.score()}" else "—"
-        harshV.text = if (started) "${comfort.harshEvents}회" else "—"
-        maxV.text = if (started) when (comfort.maxRisk) { Risk.HIGH -> "위험"; Risk.CAUTION -> "주의"; else -> "편안" } else "—"
+        // 좌석이 등받이 이동을 지원하지 않으면 숨김 (지원 목록을 모르면 보여줌)
+        val reclineSupported = reclineAreas?.any { careSeat() in it.values } != false
         val sec = comfort.durationS.toInt()
-        timeV.text = if (started) "%d:%02d".format(sec / 60, sec % 60) else "—"
+        statusV.text = when {
+            tripEnded -> "주행 종료 · 편안함 ${comfort.score()}점"
+            !tripOn -> "${seatName(seat)} · 주행 전"
+            else -> "${seatName(seat)} · 주행 중 %d:%02d".format(sec / 60, sec % 60) + (demoCourse?.let { " · 데모: ${it.title}" } ?: "")
+        }
+        preView.visibility = if (tripOn) View.GONE else View.VISIBLE
+        tripView.visibility = if (tripOn) View.VISIBLE else View.GONE
+        startBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
+        demoBtn.visibility = if (tripOn) View.GONE else View.VISIBLE
+        if (sickWide != tripOn) {   // 주행 중에는 "속이 안 좋아요"가 넓게
+            sickWide = tripOn
+            sickBtn.layoutParams = LinearLayout.LayoutParams(if (tripOn) 0 else dp(300), -2, if (tripOn) 1f else 0f).apply { marginStart = if (tripOn) 0 else dp(T.GAP) }
+        }
+        val breathLeft = ((breathUntilMs - System.currentTimeMillis()) / 1000).toInt()
+        val foot = problem?.let { "차량 응답: $it" } ?: if (lastSpoken.isEmpty()) "" else "마지막 음성 · $lastSpoken"
+        val footInk = if (problem != null) T.NEG else T.FAINT
+        val seatLocked = parked == false   // 등받이는 P단에서만 움직임
 
+        // --- 주행 전 ---
+        gauge.set(if (started) idx else null, if (started) riskName(risk) else "대기",
+            when { !started -> T.MUTED; risk == Risk.LOW -> T.POS; else -> T.WARN })
+        tileState(preAir, airAt != null)
+        preAirSub.text = airAt?.let { "켜짐 · ${ago(it)}" } ?: "흔들림 6부터 바깥 공기를 넣어요"
+        tileState(preBreath, breathLeft > 0)
+        preBreathSub.text = if (breathLeft > 0) "진행 중 · %d:%02d · 누르면 멈춰요".format(breathLeft / 60, breathLeft % 60) else "10부터 자동 · 눌러서 지금 시작"
+        preBreathSub.setTextColor(if (breathLeft > 0) T.ACCENT else T.MUTED)
+        preRecline.visibility = if (reclineSupported) View.VISIBLE else View.GONE
+        preReclineSub.text = when { reclined -> "젖혔어요"; seatLocked -> "정차(P) 중에만 · 지금은 움직일 수 없어요"; else -> "정차(P) 중에만 · 눌러서 조금 젖혀요" }
+        preRecline.isEnabled = !seatLocked && !reclined
+        preRecline.alpha = if (preRecline.isEnabled) 1f else 0.5f
+        preFoot.text = foot; preFoot.setTextColor(footInk)
+        preFoot.visibility = if (foot.isEmpty()) View.GONE else View.VISIBLE
         // 학습으로 0.9처럼 중간 값이 되면 가장 가까운 단계 하나만 표시
-        val nearest = sensBtns.minByOrNull { abs(it.first - comfort.sensitivity) }?.first
-        sensBtns.forEach { (v, b) ->
-            val on = v == nearest
-            b.setTextColor(if (on) T.p.primaryText else T.MUTED)
-            b.background = if (on) fill(T.p.primaryBg, dp(999).toFloat()) else null
+        val nearest = SENS.indexOfFirst { it.first == SENS.minBy { s -> abs(s.first - comfort.sensitivity) }.first }
+        if (sensBox.tag != nearest) {
+            sensBox.tag = nearest
+            sensBox.removeAllViews()
+            sensBox.addView(segmented(SENS.map { it.second }, nearest) { i -> setSensitivity(SENS[i].first) }, LinearLayout.LayoutParams(-1, -2))
         }
         riderNote.text = rider?.let { p ->
             val e = p.earlierPercent()
@@ -990,6 +967,51 @@ class MainActivity : Activity() {
             (when { e > 0 -> "경고 $e% 일찍"; e < 0 -> "경고 ${-e}% 늦게"; else -> "경고 시점 기본" }) +
                 (if (recent.isEmpty()) " · 첫 주행" else " · 최근 ${recent.size}회 평균 ${recent.map { it.score }.average().roundToInt()}점")
         } ?: "게스트는 기록을 남기지 않아요"
+
+        // --- 주행 중 ---
+        // 20초(40샘플) 전보다 낮으면 회복 중
+        val falling = trace.count > 40 && idx < trace.values[(trace.count - 41) % TraceView.CAP] - 0.05
+        stateWord.text = when {
+            falling && risk != Risk.LOW -> "나아지고 있어요"
+            breathLeft > 0 -> "천천히 숨 쉬어요"
+            risk == Risk.HIGH -> "케어 중이에요"
+            risk == Risk.CAUTION -> "조금 흔들려요"
+            else -> "편안해요"
+        }
+        val caring = airAt != null || breathLeft > 0
+        stateTag.text = if (caring) "차가 케어하는 중" else "흔들림을 지켜보는 중"
+        stateTag.setTextColor(if (caring) T.ACCENT else T.MUTED)
+        stateDot.background = fill(if (caring) T.ACCENT else T.FAINT, dp(999).toFloat())
+        stateCare.text = when {
+            breathLeft > 0 -> "조명이 밝아지면 들이쉬고\n어두워지면 내쉬세요"
+            airAt != null -> "바깥 공기를 넣고 바람을 세게 했어요"
+            else -> "흔들림이 커지면 차가 먼저\n바깥 공기를 넣어요"
+        }
+        val warnInk = if (risk == Risk.LOW) T.POS else T.WARN   // 빨강 대신 주황: 멀미 중인 사람을 놀라게 하지 않게
+        chipValue.text = "%.1f".format(idx); chipValue.setTextColor(warnInk)
+        chipName.text = riskName(risk); chipName.setTextColor(warnInk)
+
+        // 가운데: 호흡 가이드 중에는 호흡 원, 아니면 차 실내 그림
+        val breathStart = breathUntilMs - 60_000
+        cabin.update(seat, airAt != null, breathLeft > 0, breathStart, reclined)
+        breathView.visibility = if (breathLeft > 0) View.VISIBLE else View.GONE
+        cabin.visibility = if (breathLeft > 0) View.GONE else View.VISIBLE
+        if (breathLeft > 0 && breathView.startMs != breathStart) { breathView.startMs = breathStart; breathView.untilMs = breathUntilMs; breathView.invalidate() }
+
+        tileState(airTile, airAt != null)
+        airTileSub.text = if (airAt != null) "켜짐 · 바깥 공기" + (airFan?.let { " · 풍량 ${it}단" } ?: "") else "대기 · 흔들리면 바깥 공기를 넣어요"
+        airTileSub.setTextColor(if (airAt != null) T.ACCENT else T.MUTED)
+        tileState(breathTile, breathLeft > 0)
+        breathTileSub.text = if (breathLeft > 0) "진행 중 · %d:%02d · 누르면 멈춰요".format(breathLeft / 60, breathLeft % 60) else "눌러서 시작"
+        breathTileSub.setTextColor(if (breathLeft > 0) T.ACCENT else T.MUTED)
+        // 등받이는 P단에서만 움직이므로 정차(P)했을 때만 보여줌
+        reclineTile.visibility = if (parked == true && !reclined && reclineSupported) View.VISIBLE else View.GONE
+        val turnRecent = turnAt?.let { comfort.durationS - it < 15 } == true
+        tileState(turnTile, turnRecent)
+        turnTileSub.text = if (turnRecent) (if (turnDir < 0) "곧 왼쪽으로 돌아요" else "곧 오른쪽으로 돌아요") else "대기 · 회전 전에 음성으로 알려요"
+        turnTileSub.setTextColor(if (turnRecent) T.ACCENT else T.MUTED)
+        stateFoot.text = foot; stateFoot.setTextColor(footInk)
+        stateFoot.visibility = if (foot.isEmpty()) View.GONE else View.VISIBLE
     }
 
     private fun say(text: String) {
@@ -1033,6 +1055,8 @@ class MainActivity : Activity() {
         const val TEMP_GAP_MS = 300L
         val SENS = listOf(0.8 to "낮음", 1.0 to "보통", 1.3 to "높음")   // 설문 결과와 같은 세 단계
         const val HIGH_OFFER_S = 180.0      // 위험 단계가 이만큼 이어지면 휴게소 제안
+        const val HOLD_NOTE = "주행 종료 버튼을 길게 누르면 주행이 끝나요"
+        val BREATH_TOKEN = Any()   // 호흡 가이드 밝기 일정 묶음 (멈출 때 한 번에 지움)
         const val SICK_ASK_DELAY_MS = 6000L // 즉시 케어 안내가 끝난 뒤 휴게소 질문
         const val STT_TIMEOUT_MS = 8000L
         const val SAVE_EVERY_MS = 30_000L

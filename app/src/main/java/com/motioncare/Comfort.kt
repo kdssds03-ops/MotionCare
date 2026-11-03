@@ -140,20 +140,88 @@ class Comfort(var sensitivity: Double = 1.0) {
 /** 시연용 가상 주행 한 틱 */
 data class DemoTick(val speed: Double, val heading: Double, val signal: Int /* -1 좌, 0, 1 우 */)
 
+/** 시연용 가상 주행 코스. 모두 6분 20초, 같은 점수 계산식으로 운전 방식만 다름. */
+enum class DemoCourse(val title: String, val sub: String) {
+    SMOOTH("부드러운 운전", "천천히 가속 · 완만한 길"),
+    WINDING("굽은 산길", "계속 이어지는 굽은 길"),
+    CITY("시내 가다 서다", "급한 가감속 · 굽은 길 · 고속도로"),
+}
+
 /**
  * 시연용 6분 20초 주행 (0.5초 간격).
- * 0~60초 부드러운 주행 → 60~150초 가다 서다 → 150~210초 굽은 길
- * → 210~360초 고속도로(회복 구간) → 360~380초 정차.
+ * CITY: 0~60초 부드러운 주행 → 60~150초 가다 서다 → 150~210초 굽은 길 → 210~360초 고속도로(회복 구간) → 360~380초 정차.
+ * SMOOTH: 천천히 가속 → 완만한 길과 넓은 커브 → 고속도로 → 천천히 정차.
+ * WINDING: 비슷한 속도로 계속 이어지는 굽은 길 → 정차.
+ * rnd를 주면 실제 주행처럼 속도·커브·가다 서다 박자가 매번 조금씩 달라짐 (코스 성격은 유지). null이면 항상 같음(테스트용).
  */
-fun demoDrive(dt: Double = 0.5): List<DemoTick> {
+fun demoDrive(dt: Double = 0.5, course: DemoCourse = DemoCourse.CITY, rnd: kotlin.random.Random? = null): List<DemoTick> {
+    // ±pct 범위의 배율 하나 (rnd가 없으면 1)
+    fun k(pct: Double) = if (rnd == null) 1.0 else 1 + (rnd.nextDouble() * 2 - 1) * pct
+    return when (course) {
+        // 굽은 길의 좌우 흔들림이 급한 움직임 기준(3.0m/s²) 근처면 조금만 달라져도 횟수가 20회씩 뛰어서, 기준보다 확실히 낮게(약 2.6)
+        DemoCourse.CITY -> cityDrive(dt, speedK = k(0.03), stopGo = 4.0 * k(0.06), period = 8.0 * k(0.03), curve = 0.23 * k(0.03))
+        DemoCourse.SMOOTH -> smoothDrive(dt, speedK = k(0.08), wob = 1.0 * k(0.6), curve = 0.06 * k(0.3),
+            // 부드럽게 가다가도 가끔 살짝 세게 밟는 브레이크 0~3번 (시각은 60~190초 사이)
+            brakes = List(rnd?.nextInt(0, 4) ?: 0) { 60.0 + rnd!!.nextDouble() * 130 })
+        DemoCourse.WINDING -> windingDrive(dt, base = 12.0 * k(0.07), amp = 0.21 * k(0.07), wob = 1.5 * k(0.5))
+    }
+}
+
+private fun smoothDrive(dt: Double, speedK: Double, wob: Double, curve: Double, brakes: List<Double>): List<DemoTick> {
+    val out = ArrayList<DemoTick>()
+    var heading = 0.0
+    var t = 0.0
+    while (t < 380) {
+        // 브레이크: 1.5초 동안 4m/s 줄였다가 1.5초 동안 회복 (약 2.7m/s², 급한 움직임 기준 2.5 바로 위)
+        val dip = brakes.sumOf { b -> val x = t - b; if (x in 0.0..3.0) 4.0 * (1 - abs(x - 1.5) / 1.5) else 0.0 }
+        val speed = speedK * when {
+            t < 40 -> 14.0 * t / 40
+            t < 200 -> 14.0 + wob * sin(2 * PI * (t - 40) / 40) - dip
+            t < 240 -> 14.0 + 8.0 * (t - 200) / 40
+            t < 340 -> 22.0
+            else -> 22.0 * (380 - t) / 40
+        }
+        var signal = 0
+        if (t in 100.0..180.0) {   // 넓은 커브 두 번
+            heading += Math.toDegrees(curve * 2 * PI / 40 * kotlin.math.cos(2 * PI * (t - 100) / 40)) * dt
+            if ((t - 100) % 40 < 1.5) signal = if (t < 140) -1 else 1
+        }
+        out += DemoTick(speed, (heading + 360) % 360, signal)
+        t += dt
+    }
+    return out
+}
+
+private fun windingDrive(dt: Double, base: Double, amp: Double, wob: Double): List<DemoTick> {
     val out = ArrayList<DemoTick>()
     var heading = 0.0
     var t = 0.0
     while (t < 380) {
         val speed = when {
+            t < 25 -> base * t / 25
+            t < 350 -> base + wob * sin(2 * PI * t / 20)
+            else -> (base + wob * sin(2 * PI * 350 / 20)) * (380 - t) / 30
+        }
+        var signal = 0
+        if (t in 40.0..340.0) {   // 10초마다 좌우로 이어지는 굽은 길
+            heading += Math.toDegrees(amp * 2 * PI / 10 * kotlin.math.cos(2 * PI * (t - 40) / 10)) * dt
+            if ((t - 40) % 40 < 1.5) signal = if (((t - 40) / 40).toInt() % 2 == 0) -1 else 1
+        }
+        out += DemoTick(speed, (heading + 360) % 360, signal)
+        t += dt
+    }
+    return out
+}
+
+private fun cityDrive(dt: Double, speedK: Double, stopGo: Double, period: Double, curve: Double): List<DemoTick> {
+    val out = ArrayList<DemoTick>()
+    var heading = 0.0
+    var t = 0.0
+    while (t < 380) {
+        val speed = speedK * when {
             t < 20 -> 14.0 * t / 20
             t < 60 -> 14.0
-            t < 150 -> 9.0 + 4.0 * sin(2 * PI * (t - 60) / 8)
+            t < 150 -> 9.0 + stopGo * sin(2 * PI * (t - 60) / period)
             t < 210 -> 11.0
             t < 230 -> 11.0 + 11.0 * (t - 210) / 20     // 고속도로 합류: 천천히 가속
             t < 360 -> 22.0
@@ -162,7 +230,7 @@ fun demoDrive(dt: Double = 0.5): List<DemoTick> {
         var signal = 0
         if (t in 150.0..210.0) {
             val ph = 2 * PI * (t - 150) / 6
-            heading += Math.toDegrees(0.26 * 2 * PI / 6 * kotlin.math.cos(ph)) * dt
+            heading += Math.toDegrees(curve * 2 * PI / 6 * kotlin.math.cos(ph)) * dt
             // 굽은 길 진입(150초)과 중간(180초)에 한 번씩만 방향지시등
             if (t < 209 && (t - 150) % 30 < 1.5) signal = if (t < 180) -1 else 1
         }

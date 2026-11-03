@@ -126,6 +126,16 @@ class ProfileTest {
         assertTrue(worthKeeping(trip(null).copy(minutes = 1)))
     }
 
+    @Test fun underOneMinuteIsNeverKeptWithPlaceholderScore() {
+        // 점수는 1분 미만이면 100(판단 안 함): 그런 주행이 기록으로 남으면 안 됨
+        val short = Comfort().apply { repeat(90) { update(30.0, 0.0, 0.5) } }   // 45초
+        assertEquals(100, short.score())
+        assertEquals(0, tripMinutes(short.durationS))
+        assertFalse(worthKeeping(trip(null).copy(minutes = tripMinutes(short.durationS), score = short.score())))
+        assertEquals(1, tripMinutes(60.0))
+        assertEquals(1, tripMinutes(119.0))
+    }
+
     @Test fun corruptFileIsKeptAsBackupNotOverwritten() {
         java.io.File(tmp.root, "profiles.json").writeText("[{oops")
         val store = ProfileStore(tmp.root)

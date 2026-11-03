@@ -27,6 +27,9 @@ class UiContrastTest {
                 "SECONDARY" to (p.text to p.secondaryBg), "POS" to (p.pos to p.posBg),
                 "WARN" to (p.warn to p.warnBg), "NEG" to (p.neg to p.negBg), "SICK" to (p.sickText to p.sickBg),
                 "TEXT/RAISED" to (p.text to p.raised),
+                "ACCENT/SURFACE" to (p.accent to p.surface), "ACCENT/GROUND" to (p.accent to p.ground),
+                "ACCENT/ACCENT_BG" to (p.accent to p.accentBg), "WARN/SURFACE" to (p.warn to p.surface),
+                "FAINT/GROUND" to (p.faint to p.ground), "MUTED/RAISED" to (p.muted to p.raised),
             )
             for ((name, c) in pairs) {
                 val r = ratio(c.first, c.second)
