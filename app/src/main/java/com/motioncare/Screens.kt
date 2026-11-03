@@ -70,7 +70,7 @@ fun Context.riderSelect(
             addView(LinearLayout(context).apply {
                 gravity = Gravity.BOTTOM
                 if (last != null) {
-                    addView(label(T.STATE, T.ACCENT, 700, "${last.score}").apply { includeFontPadding = false })
+                    addView(label(T.STATE, T.ACCENT, 700, "${last.score}"))
                     addView(label(T.SMALL, T.MUTED, 500, "최근 편안함\n주행 ${p.trips.size}회").apply { setPadding(dp(14), 0, 0, dp(8)) })
                 } else addView(label(T.BODY, T.MUTED, 500, "첫 주행"))
             })

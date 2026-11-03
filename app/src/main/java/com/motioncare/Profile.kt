@@ -62,6 +62,12 @@ fun Profile.enableCare(c: Care): Profile = copy(cares = cares + (c to CareStat()
 /** 1분도 안 된 주행(잘못 누름, 이어하기 직후 종료)은 점수가 의미 없어 기록하지 않는다 */
 fun worthKeeping(t: Trip) = t.minutes >= 1
 
+/**
+ * 기록용 주행 시간(분): 버림. 반올림하면 30~59초 주행이 1분이 되어 기록되는데,
+ * 점수는 1분 미만이면 판단하지 않고 100점을 주므로 "100점" 기록이 잘못 남았음.
+ */
+fun tripMinutes(durationS: Double) = (durationS / 60).toInt()
+
 /** 사용자가 직접 끔. 기록은 그대로 둔다. */
 fun Profile.disableCare(c: Care): Profile = copy(cares = cares + (c to (cares[c] ?: CareStat()).copy(off = true)))
 
