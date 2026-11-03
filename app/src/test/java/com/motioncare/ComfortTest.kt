@@ -77,4 +77,35 @@ class ComfortTest {
         c.feedback(misc = 6)
         assertTrue(c.sensitivity > 1.0)
     }
+
+    private fun drive(c: DemoCourse, s: Double = 1.0) = Comfort(s).also { m -> demoDrive(0.5, c).forEach { m.update(it.speed, it.heading, 0.5) } }
+
+    @Test fun demoCoursesGiveDifferentScoresByDrivingStyle() {
+        val smooth = drive(DemoCourse.SMOOTH); val winding = drive(DemoCourse.WINDING); val city = drive(DemoCourse.CITY)
+        assertTrue("${smooth.score()} > ${winding.score()} > ${city.score()}", smooth.score() > winding.score() && winding.score() > city.score())
+        assertEquals(Risk.LOW, smooth.maxRisk)          // 케어가 필요 없음
+        assertEquals(Risk.CAUTION, winding.maxRisk)     // 공기 케어까지
+        assertEquals(Risk.HIGH, city.maxRisk)           // 호흡 가이드까지
+        // 세 코스 모두 같은 길이 (6분 20초)
+        assertEquals(smooth.durationS, city.durationS, 0.01); assertEquals(winding.durationS, city.durationS, 0.01)
+    }
+
+    @Test fun scoreRatesTheRideNotThePassenger() {
+        // 민감도는 경고·케어 시점만 바꾸고, 편안함 점수(주행이 얼마나 부드러웠나)는 그대로
+        for (c in DemoCourse.entries) assertEquals(drive(c, 0.8).score(), drive(c, 1.3).score())
+        assertEquals(Risk.HIGH, drive(DemoCourse.WINDING, 1.3).maxRisk)   // 민감하면 같은 길에서 더 일찍 호흡 가이드
+    }
+
+    @Test fun demoRunsVaryButKeepEachCourseCharacter() {
+        fun runs(c: DemoCourse) = (1L..100L).map { seed ->
+            Comfort().also { m -> demoDrive(0.5, c, kotlin.random.Random(seed)).forEach { m.update(it.speed, it.heading, 0.5) } }
+        }
+        val smooth = runs(DemoCourse.SMOOTH); val winding = runs(DemoCourse.WINDING); val city = runs(DemoCourse.CITY)
+        // 매번 조금씩 다름
+        for (r in listOf(smooth, winding, city)) assertTrue(r.map { it.score() }.distinct().size >= 3)
+        // 그래도 코스 성격은 그대로: 부드러운 운전은 케어 없이 높은 점수, 산길은 공기 케어까지, 시내는 호흡 가이드까지
+        assertTrue(smooth.all { it.maxRisk == Risk.LOW && it.score() >= 80 })
+        assertTrue(winding.all { it.maxRisk == Risk.CAUTION && it.score() in 75..92 })
+        assertTrue(city.all { it.maxRisk == Risk.HIGH && it.score() <= 55 })
+    }
 }
