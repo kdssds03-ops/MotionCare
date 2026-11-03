@@ -30,7 +30,7 @@ private fun alpha(color: Int, a: Float) = (color and 0x00FFFFFF) or ((a.coerceIn
  * 앞이 위쪽, 운전석은 왼쪽.
  */
 class CabinView(c: Context) : View(c) {
-    var seat = Seat.FRONT_RIGHT
+    var seat: Seat? = Seat.FRONT_RIGHT   // null = 아직 안 고름
     var air = false
     var breathStartMs = 0L
     var breathing = false
@@ -43,9 +43,9 @@ class CabinView(c: Context) : View(c) {
 
     init { contentDescription = "위에서 본 차 실내" }
 
-    fun update(seat: Seat, air: Boolean, breathing: Boolean, breathStartMs: Long, reclined: Boolean) {
+    fun update(seat: Seat?, air: Boolean, breathing: Boolean, breathStartMs: Long, reclined: Boolean) {
         this.seat = seat; this.air = air; this.breathing = breathing; this.breathStartMs = breathStartMs; this.reclined = reclined
-        contentDescription = "위에서 본 차 실내 · ${seatName(seat)}" + (if (air) " · 바람 케어 켜짐" else "") + (if (breathing) " · 호흡 조명 켜짐" else "")
+        contentDescription = "위에서 본 차 실내" + (seat?.let { " · ${seatName(it)}" } ?: "") + (if (air) " · 바람 케어 켜짐" else "") + (if (breathing) " · 호흡 조명 켜짐" else "")
         invalidate()
     }
 
