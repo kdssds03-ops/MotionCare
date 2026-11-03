@@ -79,6 +79,7 @@ class MainActivity : Activity() {
     private var liveHeading: Double? = null
     private var liveSteer: Double? = null
     private var demo: Iterator<DemoTick>? = null
+    private var demoCourse: DemoCourse? = null
     private var tripOn = false
     private var tripEnded = false
     private var tripStartMs = 0L
@@ -660,10 +661,33 @@ class MainActivity : Activity() {
 
     // --- 주행 시작/종료 ---
 
-    private fun startTrip(withDemo: Boolean) {
+    /** 데모 코스 고르기: 운전 방식에 따라 점수가 어떻게 달라지는지 보여 줌 (앱과 같은 타일로 만든 창) */
+    private fun pickDemoCourse() {
+        val dlg = android.app.Dialog(this)
+        val icons = mapOf(DemoCourse.SMOOTH to R.drawable.ic_check, DemoCourse.WINDING to R.drawable.ic_turn, DemoCourse.CITY to R.drawable.ic_rest)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = fill(T.GROUND, dp(28).toFloat())
+            setPadding(dp(32), dp(28), dp(32), dp(28))
+            addView(label(T.TITLE, T.TEXT, 700, "데모 코스를 고르세요"))
+            addView(label(T.SMALL, T.MUTED, 400, "같은 계산식으로 운전 방식만 달라요 · 매번 조금씩 다르게 달려요").apply { setPadding(0, dp(6), 0, dp(6)) })
+            addView(tileList(null, DemoCourse.entries.map { c ->
+                tile(icons.getValue(c), c.title, label(T.SMALL, T.MUTED, 400, c.sub), { dlg.dismiss(); startTrip(true, c) })
+            }), LinearLayout.LayoutParams(-1, -2))
+            addView(bigButton("취소", 1) { dlg.dismiss() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
+        }
+        dlg.setContentView(box)
+        dlg.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        dlg.window?.setLayout(dp(720), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+        dlg.show()
+    }
+
+    private fun startTrip(withDemo: Boolean, course: DemoCourse = DemoCourse.CITY) {
         comfort = Comfort(comfort.sensitivity)
         risk = Risk.LOW
-        demo = if (withDemo) demoDrive(DT).iterator() else null
+        // 데모도 매번 조금씩 다르게 (실제 주행처럼). 코스 성격은 그대로.
+        demo = if (withDemo) demoDrive(DT, course, kotlin.random.Random(System.nanoTime())).iterator() else null
+        demoCourse = if (withDemo) course else null
         tripOn = true; tripEnded = false
         tripStartMs = System.currentTimeMillis()
         resetTripState()
@@ -866,7 +890,7 @@ class MainActivity : Activity() {
         }
         noteV = label(T.BODY, T.TEXT, 500).apply { setPadding(dp(4), 0, 0, 0) }
         startBtn = bigButton("주행 시작", 0) { if (!tripOn) startTrip(false) }
-        demoBtn = bigButton("데모 주행", 1) { startTrip(true) }
+        demoBtn = bigButton("데모 주행", 1) { if (!tripOn) pickDemoCourse() }
         sickBtn = bigButton("속이 안 좋아요", 2, R.drawable.ic_wind) { sickNow() }
         micBtn = bigButton("말하기", 1, R.drawable.ic_mic) { listen() }
         val footer = LinearLayout(this).apply {
@@ -901,7 +925,7 @@ class MainActivity : Activity() {
         statusV.text = when {
             tripEnded -> "주행 종료 · 편안함 ${comfort.score()}점"
             !tripOn -> "${seatName(seat)} · 주행 전"
-            else -> "${seatName(seat)} · 주행 중 %d:%02d".format(sec / 60, sec % 60)
+            else -> "${seatName(seat)} · 주행 중 %d:%02d".format(sec / 60, sec % 60) + (demoCourse?.let { " · 데모: ${it.title}" } ?: "")
         }
         preView.visibility = if (tripOn) View.GONE else View.VISIBLE
         tripView.visibility = if (tripOn) View.VISIBLE else View.GONE
