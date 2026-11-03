@@ -685,7 +685,7 @@ class MainActivity : Activity() {
         store.saveOngoing(null)
         ui.removeCallbacks(askRest); offer = null
         tripOn = false; tripEnded = true
-        val trip = Trip(tripStartMs, (comfort.durationS / 60).roundToInt(), comfort.score(), comfort.maxRisk,
+        val trip = Trip(tripStartMs, tripMinutes(comfort.durationS), comfort.score(), comfort.maxRisk,
             null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
         demo = null
         report = ReportState(trip, comfort.harshEvents)
