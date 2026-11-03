@@ -30,9 +30,10 @@ data class Palette(
         private fun c(v: Long) = v.toInt()
         // 대비는 UiContrastTest가 확인
         val DAY = Palette(
-            ground = c(0xFFEEF1F4), surface = c(0xFFFFFFFF), raised = c(0xFFE4E8EC), rule = c(0xFFE3E7EB),
+            // 주간도 바탕과 타일 차이를 작게: 흰 카드가 떠 있는 웹 화면처럼 보이지 않게
+            ground = c(0xFFE9EDF1), surface = c(0xFFF6F8FA), raised = c(0xFFDDE2E7), rule = c(0xFFD3D9DF),
             text = c(0xFF0B1015), muted = c(0xFF4E5A66), faint = c(0xFF5E6A76), data = c(0xFF1D5FBF),
-            primaryBg = c(0xFF0B1015), primaryText = c(0xFFFFFFFF), secondaryBg = c(0xFFE4E8EC),
+            primaryBg = c(0xFF0B1015), primaryText = c(0xFFFFFFFF), secondaryBg = c(0xFFDDE2E7),
             pos = c(0xFF04250E), posBg = c(0xFFDCFAE5), warn = c(0xFF8A3B0B), warnBg = c(0xFFFFF4E0),
             neg = c(0xFF831C1E), negBg = c(0xFFFFEDEA), sickBg = c(0xFF8A3B0B), sickText = c(0xFFFFFFFF),
             accent = c(0xFF0A6E65), accentBg = c(0xFFDDF3F0),
@@ -269,8 +270,8 @@ class MarkView(c: Context) : View(c) {
 class TrendView(c: Context, private val trips: List<Trip>) : View(c) {
     private val d = c.resources.displayMetrics.density
     private val sp = c.resources.displayMetrics.scaledDensity
-    private val bar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.DATA }
-    private val demoBar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = blend(T.DATA, T.SURFACE, 0.6f) }
+    private val bar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.ACCENT }
+    private val demoBar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = blend(T.ACCENT, T.GROUND, 0.6f) }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.WARN }
     private val base = Paint().apply { color = T.RULE; strokeWidth = d }
     private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.MUTED; textSize = T.SMALL * sp; textAlign = Paint.Align.CENTER; fontFeatureSettings = "tnum" }
@@ -292,5 +293,147 @@ class TrendView(c: Context, private val trips: List<Trip>) : View(c) {
             t.misc?.let { m -> cv.drawCircle(cx, bottom - (bottom - top) * m / 10f, 7 * d, dot) }
             cv.drawText(DAY.format(java.util.Date(t.startMs)), cx, bottom + 24 * d, txt)
         }
+    }
+}
+
+// --- 차량용 화면 공통 틀: 위 머리줄 · 가운데 3단(왼쪽 한 마디 · 가운데 그림 · 오른쪽 타일) · 아래 큰 버튼 줄 ---
+
+/** 머리줄: [뒤로] 제품 마크 + 이름 [| 상태 글] ······ [오른쪽 뷰들] */
+fun Context.header(back: Pair<String, () -> Unit>?, status: TextView?, vararg right: View) = LinearLayout(this).apply {
+    gravity = Gravity.CENTER_VERTICAL
+    minimumHeight = dp(T.TOUCH)
+    if (back != null) addView(button(back.first, icon = R.drawable.ic_back) { back.second() }.apply { minimumWidth = 0; tag = "back" },
+        LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(T.GAP) })
+    addView(MarkView(context), LinearLayout.LayoutParams(dp(36), dp(36)))
+    addView(label(T.SECTION, T.TEXT, 600, "멀미케어").apply { setPadding(dp(12), 0, 0, 0) })
+    if (status != null) {
+        addView(View(context).apply { setBackgroundColor(T.RULE) }, LinearLayout.LayoutParams(dp(1), dp(28)).apply { marginStart = dp(20); marginEnd = dp(20) })
+        addView(status)
+    }
+    addView(spacer(), LinearLayout.LayoutParams(0, 1, 1f))
+    right.forEachIndexed { i, v -> addView(v, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = dp(12) }) }
+}
+
+/** 머리줄 오른쪽의 작은 상태 알약 */
+fun Context.headerChip(text: String) = label(T.SMALL, T.MUTED, 500, text).apply {
+    background = fill(T.SURFACE, dp(999).toFloat())
+    setPadding(dp(18), dp(10), dp(18), dp(10))
+}
+
+/** 화면 전체: 머리줄 + 본문(남는 높이를 채우고 좁으면 스크롤) + 아래 버튼 줄(항상 보임) */
+fun Context.frame(header: View, body: View, footer: View?): View {
+    val col = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(T.EDGE + 8), dp(24), dp(T.EDGE + 8), dp(16))
+        addView(header)
+        addView(body, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(T.GAP) })
+    }
+    return LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(T.GROUND)
+        addView(android.widget.ScrollView(context).apply { isFillViewport = true; addView(col) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        if (footer != null) addView(footer, LinearLayout.LayoutParams(-1, -2).apply {
+            marginStart = dp(T.EDGE + 8); marginEnd = dp(T.EDGE + 8); bottomMargin = dp(28)
+        })
+    }
+}
+
+/** 가운데 3단. 넓으면 가로(비율 wl:wc:wr), 좁으면(세로 화면) 위아래로 쌓기. 가운데가 null이면 2단. */
+fun Context.threeCols(left: View, center: View?, right: View, wide: Boolean, wl: Float = 1.15f, wc: Float = 0.85f, wr: Float = 1f) = LinearLayout(this).apply {
+    gravity = Gravity.CENTER_VERTICAL
+    if (wide) {
+        orientation = LinearLayout.HORIZONTAL
+        addView(left, LinearLayout.LayoutParams(0, -2, wl))
+        if (center != null) addView(center, LinearLayout.LayoutParams(0, -1, wc).apply { marginStart = dp(40); marginEnd = dp(40) })
+        addView(right, LinearLayout.LayoutParams(0, -2, wr).apply { if (center == null) marginStart = dp(48) })
+    } else {
+        orientation = LinearLayout.VERTICAL
+        addView(left, LinearLayout.LayoutParams(-1, -2))
+        if (center != null) addView(center, LinearLayout.LayoutParams(-1, dp(460)).apply { topMargin = dp(24) })
+        addView(right, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+    }
+}
+
+/** 왼쪽 한 마디 묶음: 점 + 작은 머리말, 큰 제목, 설명 */
+fun Context.hero(tag: String?, title: String, sub: String?, tagColor: Int = T.ACCENT) = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    if (tag != null) addView(LinearLayout(context).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        addView(View(context).apply { background = fill(tagColor, dp(999).toFloat()) }, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginEnd = dp(10) })
+        addView(label(T.BODY, tagColor, 600, tag))
+    }, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(10) })
+    addView(label(T.STATE, T.TEXT, 700, title).apply { setLineSpacing(0f, 1.05f) })
+    if (sub != null) addView(label(T.SECTION, T.MUTED, 400, sub).apply { setPadding(0, dp(14), 0, 0) })
+}
+
+/** 타일 세로 목록 (머리말 선택) */
+fun Context.tileList(title: String?, tiles: List<View>) = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    gravity = Gravity.CENTER_VERTICAL
+    if (title != null) addView(label(T.BODY, T.MUTED, 500, title).apply { setPadding(dp(4), 0, 0, dp(2)) })
+    tiles.forEachIndexed { i, t -> addView(t, LinearLayout.LayoutParams(-1, -2).apply { if (i > 0 || title != null) topMargin = dp(14) }) }
+}
+
+/** 케어 타일: 아이콘 + 이름 + 상태 한 줄 (+ 오른쪽 뷰). 켜지면 청록 테두리와 아이콘. onClick이 있으면 눌러짐. */
+fun Context.tile(iconRes: Int, name: String, sub: TextView, onClick: (() -> Unit)? = null, right: View? = null) = LinearLayout(this).apply {
+    gravity = Gravity.CENTER_VERTICAL
+    minimumHeight = dp(96)
+    setPadding(dp(24), dp(14), dp(if (right != null) 18 else 24), dp(14))
+    addView(icon(iconRes, 36, T.MUTED).apply { tag = "icon" })
+    addView(LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(18), 0, 0, 0)
+        addView(label(T.SECTION, T.TEXT, 600, name).apply { tag = "name" })
+        addView(sub)
+    }, LinearLayout.LayoutParams(0, -2, 1f))
+    if (right != null) addView(right)
+    if (onClick != null) { isClickable = true; setOnClickListener { onClick() } }
+    tileState(this, false)
+}
+
+fun Context.tileState(t: LinearLayout, on: Boolean) {
+    t.background = if (t.isClickable) pressable(if (on) T.SURFACE else T.RAISED, T.RADIUS, if (on) T.ACCENT else 0, 2)
+        else fill(T.SURFACE, dp(T.RADIUS).toFloat(), if (on) dp(2) else 0, T.ACCENT)
+    t.findViewWithTag<android.widget.ImageView>("icon").setColorFilter(if (on) T.ACCENT else if (t.isClickable) T.TEXT else T.FAINT)
+}
+
+/** 아래 줄 큰 버튼. kind: 0 = 주 버튼(흰/검정), 1 = 보조(회색), 2 = 속이 안 좋아요(주황) */
+fun Context.bigButton(text: String, kind: Int, icon: Int? = null, onClick: () -> Unit) = LinearLayout(this).apply {
+    gravity = Gravity.CENTER
+    minimumHeight = dp(T.SICK_H)
+    setPadding(dp(24), 0, dp(24), 0)
+    val (bg, ink) = when (kind) { 0 -> T.p.primaryBg to T.p.primaryText; 2 -> T.p.sickBg to T.p.sickText; else -> T.p.secondaryBg to T.TEXT }
+    background = pressable(bg, 24)
+    if (icon != null) addView(icon(icon, 32, ink).apply { (layoutParams as LinearLayout.LayoutParams).marginEnd = dp(12) })
+    addView(label(if (kind == 1) T.SECTION else T.TITLE, ink, if (kind == 1) 500 else 700, text).apply { tag = "label" })
+    isClickable = true
+    setOnClickListener { onClick() }
+}
+
+/** 큰 버튼 줄: (뷰, 가중치) — 가중치 0이면 고정 너비(dp) */
+fun Context.buttonBar(vararg items: Pair<View, Int>) = LinearLayout(this).apply {
+    items.forEachIndexed { i, (v, w) ->
+        addView(v, (if (w == 0) LinearLayout.LayoutParams(0, -2, 1f) else LinearLayout.LayoutParams(dp(w), -2)).apply { if (i > 0) marginStart = dp(T.GAP) })
+    }
+}
+
+/** 둥근 바탕 위 아이콘 (게스트·새 프로필 타일) */
+fun Context.iconBadge(iconRes: Int, sizeDp: Int, bg: Int, ink: Int) = android.widget.FrameLayout(this).apply {
+    background = fill(bg, dp(999).toFloat())
+    addView(icon(iconRes, sizeDp * 9 / 20, ink), android.widget.FrameLayout.LayoutParams(dp(sizeDp * 9 / 20), dp(sizeDp * 9 / 20), Gravity.CENTER))
+}
+
+/** 세 칸 고르기(아니요/가끔/자주, 낮음/보통/높음): 바탕 위에 고른 칸만 흰(주간 검정) 칸 */
+fun Context.segmented(options: List<String>, selected: Int, onPick: (Int) -> Unit) = LinearLayout(this).apply {
+    background = fill(T.SURFACE, dp(T.RADIUS).toFloat())
+    setPadding(dp(6), dp(6), dp(6), dp(6))
+    options.forEachIndexed { i, name ->
+        val on = i == selected
+        addView(label(T.BODY, if (on) T.p.primaryText else T.MUTED, if (on) 600 else 400, name).apply {
+            gravity = Gravity.CENTER; minHeight = dp(T.TOUCH)
+            background = if (on) fill(T.p.primaryBg, dp(16).toFloat()) else null
+            isClickable = true; setOnClickListener { onPick(i) }
+            contentDescription = name + if (on) " · 선택됨" else ""
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) marginStart = dp(6) })
     }
 }
