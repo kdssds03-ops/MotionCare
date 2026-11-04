@@ -131,6 +131,9 @@ class MainActivity : Activity() {
     /** 이번 주행에서 실제로 실행된 케어 (리포트·학습용) */
     val caresThisTrip = mutableSetOf<Care>()
     private val sentTemp = HashMap<SeatArea, Float>()   // 앱이 마지막으로 보낸 좌석별 온도
+    private val observedTemp = HashMap<SeatArea, Float>()   // 차가 알려 준 좌석별 현재 설정 온도
+    // 이번 주행에서 처음 공기 케어를 켤 때의 온도. 케어가 여러 번 켜져도 이 값 기준으로만 낮춤(계속 내려가지 않게)
+    private val airBaseTemp = HashMap<SeatArea, Float>()
     private val tempListeners = HashMap<SeatArea, HvacTemperatureListener>()
     private var tempSentAtMs = 0L
 
@@ -388,7 +391,9 @@ class MainActivity : Activity() {
     /** 사람이 공조 온도를 직접 바꾸면 프로필의 선호 온도로 기억 (공기 케어를 한 좌석만) */
     private fun tempListener(a: SeatArea) = object : HvacTemperatureListener {
         override fun onHvacTemperatureUpdated(v: Float?) {
-            if (v == null || a != careTempArea()) return
+            if (v == null) return
+            ui.post { observedTemp[a] = v }
+            if (a != careTempArea()) return
             ui.post {
                 // 공기 케어 뒤 10분 안의 변경만: 그 밖의 변경(자동 공조, 다른 앱)은 선호로 보지 않음
                 val recent = System.currentTimeMillis() - tempSentAtMs < TEMP_LEARN_MS
@@ -455,7 +460,7 @@ class MainActivity : Activity() {
 
     /** 바람 케어: 외기 유입 + 풍량 올리기 + 온도 살짝 낮추기 (D'Amour 2017) */
     private fun airCare(quiet: Boolean = false) {
-        if (!quiet) say("흔들림이 커지고 있어요. 바깥 공기를 넣고 바람을 조금 세게 할게요. 앞쪽 창밖을 바라봐 주세요.")
+        if (!quiet) say("흔들림이 커지고 있어요. 바깥 공기를 넣고 바람을 조금 세게, 온도는 살짝 낮출게요. 앞쪽 창밖을 바라봐 주세요.")
         caresThisTrip += Care.AIR
         airAt = comfort.durationS
         trace.mark("공기 케어")
@@ -474,7 +479,8 @@ class MainActivity : Activity() {
             // 좌석별 온도를 0.3초 간격으로: Pleos 에뮬레이터는 거의 동시에 온 두 요청 중
             // 마지막 좌석 변경만 알려서, 앞 좌석(운전석)이 화면과 차량 서비스에 옛 값으로 남았음
             tempRange.entries.forEachIndexed { i, (a, r) ->
-                val t = careTemp().coerceIn(r)
+                val base = airBaseTemp[a] ?: observedTemp[a]?.also { airBaseTemp[a] = it }
+                val t = careTarget(base, careTemp()).coerceIn(r)
                 ui.postDelayed({
                     sentTemp[a] = t; tempSentAtMs = System.currentTimeMillis()
                     hvac.setHvacTemperature(a, t, TemperatureUnit.CELSIUS, onFailed = ::fail)
@@ -726,7 +732,7 @@ class MainActivity : Activity() {
 
     /** 주행마다 새로 시작하는 케어·안내 상태 (주행 시작, 리포트 완료, 탑승자 변경 때) */
     private fun resetTripState() {
-        airAt = null; airFan = null; turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
+        airAt = null; airFan = null; airBaseTemp.clear(); turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
         caresThisTrip.clear(); offer = null; pendingRest = null; assistNote = null
         ui.removeCallbacks(askRest)
         highSinceS = null; autoOffered = false; lastTbtKey = null
