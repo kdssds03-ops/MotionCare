@@ -12,9 +12,14 @@
 
 ## 실행 방법
 1. Android Studio 최신 버전 설치 (JDK 17 포함)
-2. SDK Manager → SDK Update Sites에 Pleos Connect System Image 추가
-   - Mac: `https://nexus-playground.pleos.ai/repository/raw-releases/connect-avd/2.x/crp-arm64-sys-img.xml`
+2. SDK Manager → SDK Update Sites에 Pleos Connect System Image 추가 (**PC 종류에 맞는 주소를 써야 함**)
+   - Mac (Apple 칩): `https://nexus-playground.pleos.ai/repository/raw-releases/connect-avd/2.x/crp-arm64-sys-img.xml`
+   - Windows·Linux (Intel/AMD): `https://nexus-playground.pleos.ai/repository/raw-releases/connect-avd/2.x/crp-sys-img.xml`
+   - Windows에서 Mac 주소(arm64)를 쓰면 에뮬레이터가 극도로 느려져 노트북이 멈춘 것처럼 됨. 이미 만든 AVD가 있으면 지우고 다시 만들기
 3. Device Manager → Automotive → Pleos Connect v2.1.0 (API 34, RAM 4GB, Cold boot) AVD 생성·실행
+   - Windows: "Windows 기능 켜기/끄기"에서 **Windows 하이퍼바이저 플랫폼**을 켜고 재부팅 (꺼져 있으면 에뮬레이터가 매우 느림)
+   - 노트북 RAM이 8GB면 AVD RAM을 2~3GB로 낮추고 다른 프로그램을 끈 채 실행 (에뮬레이터 + Android Studio + Gradle이 함께 8GB 넘게 씀)
+   - 빌드 없이 앱만 확인하려면 4번 대신 에뮬레이터를 켠 뒤 아래 [APK](#apk) 설치 명령만 실행
 4. 이 폴더를 Android Studio로 열고 Run
 5. (공조 시연 시) `adb forward tcp:8088 tcp:8088` 후 http://127.0.0.1:8088 Virtual Console의 Climate에서 풍량을 한 번 조작
    - 에뮬레이터를 막 켠 상태에서는 공조 시뮬레이션이 아직 동작하지 않아서 풍량 변경이 "사용 불가"로 거부됨
