@@ -36,13 +36,26 @@ class ProfileTest {
 
     @Test fun unhelpfulCareTurnsOff() {
         var p = base
-        repeat(3) { p = p.learn(trip(null, cares = setOf(Care.AIR))) }
+        repeat(3) { p = p.learn(trip(5, cares = setOf(Care.AIR))) }
         assertTrue(p.cares.getValue(Care.AIR).off)
 
         var q = base
-        q = q.learn(trip(null, cares = setOf(Care.AIR), helped = setOf(Care.AIR)))
-        repeat(2) { q = q.learn(trip(null, cares = setOf(Care.AIR))) }
+        q = q.learn(trip(5, cares = setOf(Care.AIR), helped = setOf(Care.AIR)))
+        repeat(2) { q = q.learn(trip(5, cares = setOf(Care.AIR))) }
         assertFalse(q.cares.getValue(Care.AIR).off)
+    }
+
+    @Test fun noSicknessTripsDoNotTurnCareOff() {
+        var p = base
+        repeat(5) { p = p.learn(trip(0, cares = setOf(Care.TURN_CUE))) }
+        assertFalse(p.cares[Care.TURN_CUE]?.off == true)
+        assertEquals(0, p.cares[Care.TURN_CUE]?.runs ?: 0)
+    }
+
+    @Test fun unansweredTripsDoNotCount() {
+        var p = base
+        repeat(5) { p = p.learn(trip(null, cares = setOf(Care.AIR))) }
+        assertEquals(0, p.cares[Care.AIR]?.runs ?: 0)
     }
 
     @Test fun reEnableResetsStats() {
