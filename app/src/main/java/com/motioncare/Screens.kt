@@ -297,7 +297,7 @@ fun Context.report(
 }
 
 fun careIcon(c: Care) = when (c) { Care.AIR -> R.drawable.ic_wind; Care.BREATH -> R.drawable.ic_breath; Care.TURN_CUE -> R.drawable.ic_turn; Care.RECLINE -> R.drawable.ic_seat }
-fun careDone(c: Care) = when (c) { Care.AIR -> "바깥 공기를 넣고 바람을 세게 했어요"; Care.BREATH -> "조명으로 숨 쉬는 박자를 알려 줬어요"; Care.TURN_CUE -> "돌기 전에 미리 알려 줬어요"; Care.RECLINE -> "등받이를 조금 젖혔어요" }
+fun careDone(c: Care) = when (c) { Care.AIR -> "바깥 공기를 넣고 바람을 세게 했어요"; Care.BREATH -> "조명과 소리로 숨 쉬는 박자를 알려 줬어요"; Care.TURN_CUE -> "돌기 전에 미리 알려 줬어요"; Care.RECLINE -> "등받이를 조금 젖혔어요" }
 
 // --- 프로필 상세 ---
 

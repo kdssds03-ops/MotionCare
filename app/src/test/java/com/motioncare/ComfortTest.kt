@@ -1,6 +1,7 @@
 package com.motioncare
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -127,5 +128,13 @@ class ComfortTest {
         assertTrue("harsh ${Comfort.SCORE_PER_EVENT * city.harshEvents} of $penalty", Comfort.SCORE_PER_EVENT * city.harshEvents < penalty / 2.0)
         assertTrue("smooth ${drive(DemoCourse.SMOOTH).score()} vs winding ${drive(DemoCourse.WINDING).score()}",
             drive(DemoCourse.SMOOTH).score() - drive(DemoCourse.WINDING).score() >= 20)
+    }
+
+    /** "나아지고 있어요"는 주의 단계에서 20초 사이 10% 넘게 내려갈 때만 (가다 서다의 잠깐 떨어짐은 제외) */
+    @Test fun easingOnlyOnRealDropAtCaution() {
+        assertFalse(isEasing(14.6, 15.0, Risk.HIGH))     // 아직 많이 흔들림
+        assertTrue(isEasing(8.0, 9.5, Risk.CAUTION))
+        assertFalse(isEasing(8.0, 8.3, Risk.CAUTION))    // 오르내리는 정도
+        assertFalse(isEasing(3.0, 5.0, Risk.LOW))        // 이미 편안함
     }
 }
