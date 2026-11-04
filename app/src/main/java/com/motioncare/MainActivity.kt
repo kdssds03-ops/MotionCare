@@ -80,6 +80,7 @@ class MainActivity : Activity() {
     private var liveSpeed = 0.0
     private var liveHeading: Double? = null
     private var liveSteer: Double? = null
+    private var curSpeed = 0.0   // 이번 틱에 쓴 속도(데모면 가상 속도), 회전 예고 시간 계산용
     private var demo: Iterator<DemoTick>? = null
     private var demoCourse: DemoCourse? = null
     private var tripOn = false
@@ -437,7 +438,8 @@ class MainActivity : Activity() {
             if (d != null && t == null) { endTrip(); ui.postDelayed(this, 500); return }
             if (t != null) onSignal(t.signal)
             // 실제 주행에서는 핸들 각도 우선, 데모는 미리 만든 진행 방향 사용
-            val r = comfort.update(t?.speed ?: liveSpeed, t?.heading ?: liveHeading, DT, if (t == null) liveSteer else null)
+            curSpeed = t?.speed ?: liveSpeed
+            val r = comfort.update(curSpeed, t?.heading ?: liveHeading, DT, if (t == null) liveSteer else null)
             trace.push(comfort.windowMsdv * comfort.sensitivity)
             if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR)) airCare()
             if (r == Risk.HIGH && risk < Risk.HIGH && careOn(Care.BREATH)) breathing()
@@ -564,7 +566,7 @@ class MainActivity : Activity() {
     private fun onSignal(s: Int) {
         if (s != 0 && s != lastSignal && !routeActive && careOn(Care.TURN_CUE)) {
             caresThisTrip += Care.TURN_CUE
-            say(if (s < 0) "곧 왼쪽으로 돌아요" else "곧 오른쪽으로 돌아요")
+            cue(turnCueText(s))
             turnDir = s; turnAt = comfort.durationS
         }
         lastSignal = s
@@ -584,11 +586,11 @@ class MainActivity : Activity() {
         if (t == null || !careOn(Care.TURN_CUE)) return
         val side = turnSide(t.type.name)
         val key = "${t.type}-${t.description}"
-        if (side == 0 || !shouldCueTurn(t.distance, key, lastTbtKey)) return
+        if (side == 0 || !shouldCueTurn(t.distance.toDouble(), curSpeed, key, lastTbtKey)) return
         lastTbtKey = key
         caresThisTrip += Care.TURN_CUE
         turnDir = side; turnAt = comfort.durationS
-        say(turnCueText(side, t.distance))
+        cue(turnCueText(side))
         render()
     }
 
@@ -1048,6 +1050,14 @@ class MainActivity : Activity() {
         turnTileSub.setTextColor(if (turnRecent) T.ACCENT else T.MUTED)
         stateFoot.text = foot; stateFoot.setTextColor(footInk)
         stateFoot.visibility = if (foot.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /** 움직임 예고: 짧은 소리 + 한 마디. 회전마다 같은 말이 나와야 해서 30초 반복 금지(gate)를 거치지 않음 */
+    private fun cue(text: String) {
+        beep(ToneGenerator.TONE_PROP_BEEP2, 120)
+        android.util.Log.i("MotionCare", "cue: $text")
+        lastSpoken = text
+        if (ttsReady) tts.speak(text, true)
     }
 
     private fun say(text: String) {

@@ -47,11 +47,16 @@ class AssistTest {
         assertTrue(areas.all { it.lat in 33.0..39.0 && it.lon in 124.0..132.0 && it.name.isNotBlank() })
     }
 
-    @Test fun turnCueOncePerManeuver() {
-        assertTrue(shouldCueTurn(250.0, "L-용인", null))
-        assertFalse(shouldCueTurn(240.0, "L-용인", "L-용인"))
-        assertFalse(shouldCueTurn(400.0, "R-수원", "L-용인"))
-        assertFalse(shouldCueTurn(20.0, "R-수원", "L-용인"))
+    @Test fun cueAboutFourSecondsBefore() {
+        assertFalse(shouldCueTurn(100.0, 14.0, "k", null))   // 7초 전
+        assertTrue(shouldCueTurn(50.0, 14.0, "k", null))     // 3.6초 전
+        assertFalse(shouldCueTurn(50.0, 14.0, "k", "k"))     // 같은 회전은 한 번
+        assertFalse(shouldCueTurn(3.0, 14.0, "k", null))     // 이미 회전 중
+    }
+
+    @Test fun stoppedUsesDistanceOnly() {
+        assertFalse(shouldCueTurn(100.0, 0.0, "k", null))
+        assertTrue(shouldCueTurn(30.0, 0.0, "k", null))
     }
 
     @Test fun speechGate() {
@@ -68,9 +73,9 @@ class AssistTest {
         assertEquals(0, turnSide("TURN_STRAIGHT")); assertEquals(0, turnSide("TURN_KEEP_L")); assertEquals(0, turnSide("TURN_TOLL"))
     }
 
-    @Test fun turnCueTextRoundsDown() {
-        assertEquals("250m 뒤 왼쪽으로 돌아요", turnCueText(-1, 287.0))
-        assertEquals("50m 뒤 오른쪽으로 돌아요", turnCueText(1, 31.0))
+    @Test fun turnCueTextIsShort() {
+        assertEquals("곧 왼쪽", turnCueText(-1))
+        assertEquals("곧 오른쪽", turnCueText(1))
     }
 
     @Test fun userTempOnlyWhenDifferentFromSent() {

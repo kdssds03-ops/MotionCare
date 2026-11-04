@@ -39,9 +39,13 @@ private fun km(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     return 2 * 6371.0 * asin(sqrt(h))
 }
 
-/** 다음 회전까지 300m 안(30m보다 멀 때)에 들어오면 그 회전에 한 번만 예고 */
-fun shouldCueTurn(distanceM: Double, key: String, lastKey: String?): Boolean =
-    distanceM > 30 && distanceM <= 300 && key != lastKey
+/**
+ * 회전 직전(약 4초 전)에 그 회전에 한 번만 예고. 움직임 예고는 시작 직전에 줄 때 몸이 대비할 수 있음 (Reuten 2024).
+ * 거의 멈춰 있으면(1m/s 미만) 시간 대신 40m 안인지로 판단.
+ */
+fun shouldCueTurn(distanceM: Double, speedMps: Double, key: String, lastKey: String?): Boolean =
+    key != lastKey && distanceM > 5 &&
+        (distanceM <= 40 || (speedMps >= 1 && distanceM / speedMps <= 4.0))
 
 /** 같은 안내를 gapMs 안에 반복하지 않는다 */
 class SpeechGate(private val gapMs: Long = 30_000) {
@@ -61,9 +65,8 @@ fun turnSide(type: String): Int = when (type) {
     else -> 0
 }
 
-/** "250m 뒤 왼쪽으로 돌아요" (50m 단위로 내림, 최소 50m) */
-fun turnCueText(side: Int, distanceM: Double): String =
-    "${maxOf(50, (distanceM / 50).toInt() * 50)}m 뒤 ${if (side < 0) "왼쪽" else "오른쪽"}으로 돌아요"
+/** 짧게: 긴 문장은 말하는 동안 회전이 시작돼 예고 시점이 흐려짐 */
+fun turnCueText(side: Int): String = if (side < 0) "곧 왼쪽" else "곧 오른쪽"
 
 /** 앱이 보낸 온도와 0.1도 이상 다르면 사람이 직접 바꾼 것 */
 fun isUserTemp(sent: Float?, observed: Float): Boolean = sent != null && kotlin.math.abs(observed - sent) >= 0.1f
