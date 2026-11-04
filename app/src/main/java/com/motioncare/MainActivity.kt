@@ -1030,11 +1030,11 @@ class MainActivity : Activity() {
         } ?: "게스트는 기록을 남기지 않아요"
 
         // --- 주행 중 ---
-        // 20초(40샘플) 전보다 낮으면 회복 중
-        val falling = trace.count > 40 && idx < trace.values[(trace.count - 41) % TraceView.CAP] - 0.05
+        // 20초(40샘플) 전보다 확실히 낮으면 회복 중. 호흡 중에는 호흡 안내가 먼저
+        val falling = trace.count > 40 && isEasing(idx, trace.values[(trace.count - 41) % TraceView.CAP].toDouble(), risk)
         stateWord.text = when {
-            falling && risk != Risk.LOW -> "나아지고 있어요"
             breathLeft > 0 -> "천천히 숨 쉬어요"
+            falling -> "나아지고 있어요"
             risk == Risk.HIGH -> "케어 중이에요"
             risk == Risk.CAUTION -> "조금 흔들려요"
             else -> "편안해요"

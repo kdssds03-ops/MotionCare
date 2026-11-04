@@ -244,3 +244,7 @@ private fun cityDrive(dt: Double, speedK: Double, stopGo: Double, period: Double
     }
     return out
 }
+
+/** 주행 화면 "나아지고 있어요": 주의 단계에서 20초 전보다 10% 넘게 내려갔을 때만 (가다 서다의 잠깐 떨어짐은 제외) */
+fun isEasing(nowIdx: Double, idx20sAgo: Double, risk: Risk): Boolean =
+    risk == Risk.CAUTION && nowIdx < idx20sAgo * 0.9
