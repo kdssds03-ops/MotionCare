@@ -70,3 +70,18 @@ fun turnCueText(side: Int): String = if (side < 0) "곧 왼쪽" else "곧 오른
 
 /** 앱이 보낸 온도와 0.1도 이상 다르면 사람이 직접 바꾼 것 */
 fun isUserTemp(sent: Float?, observed: Float): Boolean = sent != null && kotlin.math.abs(observed - sent) >= 0.1f
+
+/**
+ * 운전자 코칭은 정차 중에만 (명세서 안전 원칙: 주행 중 말 걸기 최소화).
+ * 주행 중 급조작은 쌓아 두었다가 멈추면 한 번에 알려 준다.
+ */
+class CoachQueue {
+    private var harsh = 0
+    fun onHarsh() { harsh++ }
+    fun clear() { harsh = 0 }
+    /** 멈췄고(0.5m/s 미만) 쌓인 게 있으면 그 횟수를 돌려주고 비움, 아니면 0 */
+    fun poll(speedMps: Double): Int {
+        if (speedMps >= 0.5 || harsh == 0) return 0
+        return harsh.also { harsh = 0 }
+    }
+}

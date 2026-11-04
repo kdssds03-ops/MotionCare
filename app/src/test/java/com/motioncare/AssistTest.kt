@@ -89,4 +89,12 @@ class AssistTest {
         assertEquals(false, answer("안 좋아요"))
         assertEquals(true, answer("좋아 추가해 줘"))
     }
+
+    @Test fun speaksOnceWhenStopped() {
+        val q = CoachQueue()
+        q.onHarsh(); q.onHarsh()
+        assertEquals(0, q.poll(10.0))
+        assertEquals(2, q.poll(0.0))
+        assertEquals(0, q.poll(0.0))
+    }
 }
