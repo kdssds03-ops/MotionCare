@@ -96,10 +96,10 @@ fun learnTemp(observedC: Float): Float = observedC.coerceIn(18f, 26f)
 
 /**
  * 공기 케어 온도: 현재 설정보다 1~2°C 낮게(명세 F5), 그 안에서는 탑승자 선호 온도에 가깝게.
- * 18~26°C 안이지만 지금보다 따뜻하게 만들지는 않는다. 현재 설정을 모르면 선호 온도.
+ * 18~26°C 안이지만 지금보다 따뜻하게 만들지는 않는다. 현재 설정을 모르면 null(온도는 바꾸지 않음).
  */
-fun careTarget(currentC: Float?, prefC: Float): Float {
-    if (currentC == null) return prefC
+fun careTarget(currentC: Float?, prefC: Float): Float? {
+    if (currentC == null) return null
     return minOf(prefC.coerceIn(currentC - 2f, currentC - 1f).coerceIn(18f, 26f), currentC)
 }
 

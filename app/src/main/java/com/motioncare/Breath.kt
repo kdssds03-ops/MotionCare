@@ -13,3 +13,10 @@ fun breathUntil(startMs: Long, untilMs: Long, nowMs: Long, risk: Risk): Long =
     else untilMs
 
 fun isInhale(elapsedMs: Long): Boolean = (elapsedMs / BREATH_PHASE_MS) % 2 == 0L
+
+/** 위험이 '높음'으로 올라설 때 자동 시작. 단, 탑승자가 직접 멈췄으면 시작하지 않음 */
+fun autoStartBreath(risk: Risk, prevRisk: Risk, userStopped: Boolean): Boolean =
+    risk == Risk.HIGH && prevRisk < Risk.HIGH && !userStopped
+
+/** 직접 멈춤은 흔들림이 '낮음'으로 가라앉을 때까지 유지 (주의↔위험을 오가며 다시 켜지지 않게) */
+fun keepUserStop(risk: Risk, userStopped: Boolean): Boolean = userStopped && risk != Risk.LOW

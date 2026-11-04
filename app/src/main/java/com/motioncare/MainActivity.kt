@@ -102,6 +102,7 @@ class MainActivity : Activity() {
     private var airFan: Int? = null
     private var breathUntilMs = 0L
     private var breathStartMs = 0L
+    private var breathStoppedByUser = false   // 직접 멈추면 흔들림이 가라앉을 때까지 자동 시작 안 함
     private var tone: ToneGenerator? = null   // 호흡 박자·회전 예고용 짧은 소리
     private var turnAt: Double? = null
     private var turnDir = 0
@@ -442,7 +443,8 @@ class MainActivity : Activity() {
             val r = comfort.update(curSpeed, t?.heading ?: liveHeading, DT, if (t == null) liveSteer else null)
             trace.push(comfort.windowMsdv * comfort.sensitivity)
             if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR)) airCare()
-            if (r == Risk.HIGH && risk < Risk.HIGH && careOn(Care.BREATH)) breathing()
+            breathStoppedByUser = keepUserStop(r, breathStoppedByUser)
+            if (autoStartBreath(r, risk, breathStoppedByUser) && careOn(Care.BREATH)) breathing()
             // 흔들림이 이어지는 동안 호흡 가이드 연장 (직접 멈춘 경우는 그대로)
             breathUntilMs = breathUntil(breathStartMs, breathUntilMs, System.currentTimeMillis(), r)
             risk = r
@@ -482,14 +484,27 @@ class MainActivity : Activity() {
             // 좌석별 온도를 0.3초 간격으로: Pleos 에뮬레이터는 거의 동시에 온 두 요청 중
             // 마지막 좌석 변경만 알려서, 앞 좌석(운전석)이 화면과 차량 서비스에 옛 값으로 남았음
             tempRange.entries.forEachIndexed { i, (a, r) ->
-                val base = airBaseTemp[a] ?: observedTemp[a]?.also { airBaseTemp[a] = it }
-                val t = careTarget(base, careTemp()).coerceIn(r)
-                ui.postDelayed({
-                    sentTemp[a] = t; tempSentAtMs = System.currentTimeMillis()
-                    hvac.setHvacTemperature(a, t, TemperatureUnit.CELSIUS, onFailed = ::fail)
-                }, i * TEMP_GAP_MS)
+                ui.postDelayed({ lowerTemp(a, r) }, i * TEMP_GAP_MS)
             }
         }, 500)
+    }
+
+    /**
+     * 공기 케어 온도 한 좌석: 이번 주행 기준 온도보다 1~2°C 낮게.
+     * 현재 설정을 아직 모르면 차에 물어보고, 그래도 모르면 온도는 그대로 둔다(데우지 않게).
+     */
+    private fun lowerTemp(a: SeatArea, r: ClosedFloatingPointRange<Float>) {
+        val hvac = vehicle.getHVAC()
+        fun set(base: Float?) {
+            val t = careTarget(base, careTemp())?.coerceIn(r) ?: return
+            sentTemp[a] = t; tempSentAtMs = System.currentTimeMillis()
+            hvac.setHvacTemperature(a, t, TemperatureUnit.CELSIUS, onFailed = ::fail)
+        }
+        val known = airBaseTemp[a] ?: observedTemp[a]?.also { airBaseTemp[a] = it }
+        if (known != null) return set(known)
+        hvac.getHvacTemperature(a, TemperatureUnit.CELSIUS,
+            { v -> ui.post { if (v != null) { observedTemp[a] = v; airBaseTemp[a] = v }; set(v) } },
+            { _ -> })
     }
 
     /**
@@ -505,6 +520,8 @@ class MainActivity : Activity() {
         breathStartMs = now
         breathUntilMs = now + BREATH_MIN_MS
         if (tripOn) trace.mark("호흡 가이드")
+        breathStoppedByUser = false
+        ui.removeCallbacksAndMessages(BREATH_TOKEN)   // 이전 박자 예약이 남아 있으면 겹치지 않게
         ui.postDelayed(breathStep, BREATH_TOKEN, 0)
         render()
     }
@@ -538,7 +555,7 @@ class MainActivity : Activity() {
         render()
     }
 
-    private fun toggleBreathing() = if (breathActive()) stopBreathing() else breathing()
+    private fun toggleBreathing() = if (breathActive()) { stopBreathing(); breathStoppedByUser = true } else breathing()
 
     /** 앰비언트 밝기: true = 최대(들숨), false = 최소(날숨), null = 중간 */
     private fun setAmbient(bright: Boolean?) {
@@ -734,7 +751,7 @@ class MainActivity : Activity() {
 
     /** 주행마다 새로 시작하는 케어·안내 상태 (주행 시작, 리포트 완료, 탑승자 변경 때) */
     private fun resetTripState() {
-        airAt = null; airFan = null; airBaseTemp.clear(); coachQ.clear(); turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
+        airAt = null; airFan = null; airBaseTemp.clear(); coachQ.clear(); breathStoppedByUser = false; turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
         caresThisTrip.clear(); offer = null; pendingRest = null; assistNote = null
         ui.removeCallbacks(askRest)
         highSinceS = null; autoOffered = false; lastTbtKey = null
@@ -751,8 +768,10 @@ class MainActivity : Activity() {
             null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
         demo = null
         report = ReportState(trip, comfort.harshEvents)
-        // 주행이 끝나면 차가 선 상태: 주행 중 쌓인 운전자 코칭을 종료 안내에 붙여 한 번에
-        val harsh = coachQ.poll(0.0)
+        // 주행이 끝날 때 차가 서 있으면: 주행 중 쌓인 운전자 코칭을 종료 안내에 붙여 한 번에 (달리는 중이면 말하지 않음)
+        stopBreathing()   // 리포트 화면에서 박자 소리가 계속 나지 않게
+        // 데모는 가상 주행이라 실제 차는 서 있음 → 실제 속도 기준은 실주행에만
+        val harsh = coachQ.poll(if (trip.demo) 0.0 else liveSpeed)
         coachCount += harsh
         val tip = if (harsh > 0) " 출발과 제동을 조금 더 천천히 하면 동승자가 더 편해요." else ""
         say("주행이 끝났어요. 편안함 점수는 ${comfort.score()}점이에요.$tip 멀미는 어땠는지 알려주세요.")
