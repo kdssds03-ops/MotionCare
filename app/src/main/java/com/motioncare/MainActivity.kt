@@ -88,7 +88,7 @@ class MainActivity : Activity() {
     private var tripStartMs = 0L
     private var report: ReportState? = null
     private var lastSignal = 0
-    private var lastCoachMs = 0L
+    private val coachQ = CoachQueue()
 
     // 공조는 기능마다 지원 구역이 달라서 따로 저장
     private var powerAreas: List<SeatArea> = emptyList()
@@ -449,7 +449,8 @@ class MainActivity : Activity() {
             // 위험 단계가 3분 이어지면 주행당 한 번 휴게소 제안
             highSinceS = if (r == Risk.HIGH) highSinceS ?: comfort.durationS else null
             if (!autoOffered && highSinceS?.let { comfort.durationS - it >= HIGH_OFFER_S } == true) { autoOffered = true; offerRestArea("high") }
-            if (comfort.harshJustNow) coach()
+            if (comfort.harshJustNow) coachQ.onHarsh()
+            coach()
             // 30초마다 진행 중 주행 저장 (앱이 강제로 꺼져도 이어 갈 수 있게)
             val now = System.currentTimeMillis()
             if (now - lastSaveMs >= SAVE_EVERY_MS) { lastSaveMs = now; saveOngoing() }
@@ -572,13 +573,12 @@ class MainActivity : Activity() {
         lastSignal = s
     }
 
-    /** 운전자 코칭: 급조작 시 음성 한 마디 (30초에 한 번까지) */
+    /** 운전자 코칭: 주행 중 급조작은 모아 두었다가 정차했을 때 한 번 음성으로 */
     private fun coach() {
-        val now = System.currentTimeMillis()
-        if (now - lastCoachMs < 30_000) return
-        lastCoachMs = now
-        coachCount++
-        say("동승자를 위해 조금만 더 부드럽게 운전해 주세요.")
+        val n = coachQ.poll(curSpeed)
+        if (n == 0) return
+        coachCount += n
+        say("아까 흔들림이 있었어요. 출발과 제동을 조금 더 천천히 하면 동승자가 편해요.")
     }
 
     /** 내비 회전 예고: 좌·우·급회전·유턴만, 같은 회전은 한 번 */
@@ -734,7 +734,7 @@ class MainActivity : Activity() {
 
     /** 주행마다 새로 시작하는 케어·안내 상태 (주행 시작, 리포트 완료, 탑승자 변경 때) */
     private fun resetTripState() {
-        airAt = null; airFan = null; airBaseTemp.clear(); turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
+        airAt = null; airFan = null; airBaseTemp.clear(); coachQ.clear(); turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
         caresThisTrip.clear(); offer = null; pendingRest = null; assistNote = null
         ui.removeCallbacks(askRest)
         highSinceS = null; autoOffered = false; lastTbtKey = null
