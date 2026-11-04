@@ -371,7 +371,7 @@ fun Context.profileDetail(
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
         addView(label(T.SECTION, T.TEXT, 600, "케어별 효과").apply { setPadding(dp(4), 0, 0, 0) })
-        addView(label(T.SMALL, T.FAINT, 400, "3번 넘게 써도 도움이 적으면 자동으로 꺼져요").apply { setPadding(dp(4), dp(4), 0, 0) })
+        addView(label(T.SMALL, T.FAINT, 400, "멀미했던 주행에서 3번 넘게 도움이 적으면 꺼져요").apply { setPadding(dp(4), dp(4), 0, 0) })
         addView(tileList(null, tiles), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
     }
     val delete = bigButton("프로필 삭제", 1) { onDelete() }.apply { findViewWithTag<TextView>("label").setTextColor(T.NEG) }

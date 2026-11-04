@@ -40,9 +40,16 @@ fun adjustSensitivity(s: Double, misc: Int, maxRisk: Risk): Double {
 
 const val MAX_TRIPS = 50
 
+/**
+ * 케어 효과를 셀 수 있는 주행: 멀미가 있었다고 답한 주행(MISC 2 이상)만.
+ * 멀미가 없었거나(예방이 됐을 수 있음) 답하지 않은 주행은 "도움 됨"을 고를 이유가 없어서,
+ * 세면 효과 있던 케어까지 꺼진다.
+ */
+fun countsForCareStats(t: Trip): Boolean = t.misc != null && t.misc >= 2
+
 fun Profile.learn(trip: Trip): Profile {
     val stats = cares.toMutableMap()
-    for (c in trip.cares) {
+    if (countsForCareStats(trip)) for (c in trip.cares) {
         val old = stats[c] ?: CareStat()
         val runs = old.runs + 1
         val helped = old.helped + if (c in trip.helped) 1 else 0
