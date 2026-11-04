@@ -111,6 +111,7 @@ class MainActivity : Activity() {
     private var problem: String? = null
     private var parked: Boolean? = null   // 기어 P 여부, 모르면 null
     private var reclined = false
+    private var reclineReserved = false   // 주행 중 예약, 정차(P)하면 젖힘
     private var reclineAreas: List<SeatArea>? = null   // 등받이를 움직일 수 있는 좌석, 모르면 null
 
     // 즉시 케어·음성·휴게소·내비
@@ -370,9 +371,18 @@ class MainActivity : Activity() {
     private val gearListener = object : GearSelectionListener {
         override fun onSelected(gear: VehicleGear?) {
             val was = keyboardAllowed
+            val wasParked = parked
             parked = gear?.let { it == VehicleGear.GEAR_PARK }
             if (parked == true && problem?.startsWith("주행 중") == true) problem = null
-            ui.post { if (screen == Screen.CreateProfile && was != keyboardAllowed) show(screen) else render() }
+            val autoRecline = reclineOnPark(wasParked, parked, reclineReserved, reclined)
+            ui.post {
+                if (autoRecline && reclineReserved) {   // 그사이 취소됐으면 움직이지 않음
+                    reclineReserved = false
+                    say("정차했어요. 예약한 대로 등받이를 조금 젖힐게요")
+                    recline()
+                }
+                if (screen == Screen.CreateProfile && was != keyboardAllowed) show(screen) else render()
+            }
         }
         override fun onFailed(e: Exception) = fail(e)
     }
@@ -566,8 +576,26 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun reclineText(seatLocked: Boolean) = when {
+        reclined -> "젖혔어요"
+        reclineReserved -> "예약됨 · 정차(P)하면 젖혀요 · 누르면 취소"
+        seatLocked -> "주행 중 · 눌러서 예약하면 정차(P) 때 젖혀요"
+        else -> "정차(P) 중 · 눌러서 조금 젖혀요"
+    }
+
+    /** 등받이 버튼: P단이면 바로 젖히고, 주행 중이면 예약/취소 */
+    private fun onReclineTap() {
+        when (reclineTap(parked, reclined, reclineReserved)) {
+            ReclineTap.NOW -> recline()
+            ReclineTap.RESERVE -> { reclineReserved = true; say("예약했어요. 정차하면 등받이를 조금 젖힐게요") }
+            ReclineTap.CANCEL -> { reclineReserved = false; say("등받이 예약을 취소했어요") }
+            ReclineTap.NONE -> {}
+        }
+        render()
+    }
+
     /**
-     * 동승석 등받이 살짝 젖히기 (TUM 연구). 동승자가 버튼으로 직접 실행.
+     * 동승석 등받이 살짝 젖히기 (TUM 연구). 동승자가 버튼으로 직접 실행하거나, 주행 중 예약해 두면 정차(P) 때 실행.
      * Pleos는 P단이 아니면 시트 이동을 막음(오류 50001, 속도 0이어도 D면 거부) → P단에서만 시도.
      */
     private fun recline() {
@@ -751,7 +779,7 @@ class MainActivity : Activity() {
 
     /** 주행마다 새로 시작하는 케어·안내 상태 (주행 시작, 리포트 완료, 탑승자 변경 때) */
     private fun resetTripState() {
-        airAt = null; airFan = null; airBaseTemp.clear(); coachQ.clear(); breathStoppedByUser = false; turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false
+        airAt = null; airFan = null; airBaseTemp.clear(); coachQ.clear(); breathStoppedByUser = false; turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false; reclineReserved = false
         caresThisTrip.clear(); offer = null; pendingRest = null; assistNote = null
         ui.removeCallbacks(askRest)
         highSinceS = null; autoOffered = false; lastTbtKey = null
@@ -823,6 +851,7 @@ class MainActivity : Activity() {
     private lateinit var breathTile: LinearLayout
     private lateinit var breathTileSub: TextView
     private lateinit var reclineTile: LinearLayout
+    private lateinit var reclineTileSub: TextView
     private lateinit var turnTile: LinearLayout
     private lateinit var turnTileSub: TextView
     // 아래
@@ -881,7 +910,7 @@ class MainActivity : Activity() {
         preAir = tile(R.drawable.ic_wind, "공기 케어", preAirSub)
         preBreath = tile(R.drawable.ic_breath, "호흡 가이드", preBreathSub, { toggleBreathing() })
         val preTurn = tile(R.drawable.ic_turn, "회전 예고", label(T.SMALL, T.MUTED, 400, "돌기 전에 음성으로 알려요"))
-        preRecline = tile(R.drawable.ic_seat, "등받이 젖히기", preReclineSub, { recline() })
+        preRecline = tile(R.drawable.ic_seat, "등받이 젖히기", preReclineSub, { onReclineTap() })
         preView = threeCols(preLeft, preCenter, tileList("차가 알아서 하는 일", listOf(preAir, preBreath, preTurn, preRecline)), wide)
 
         // --- 주행 중: 상태 한 마디 | 차 실내 그림(호흡 가이드 중에는 호흡 원) | 케어 타일 ---
@@ -927,7 +956,8 @@ class MainActivity : Activity() {
         airTileSub = label(T.SMALL, T.MUTED); breathTileSub = label(T.SMALL, T.MUTED); turnTileSub = label(T.SMALL, T.MUTED)
         airTile = tile(R.drawable.ic_wind, "공기 케어", airTileSub)
         breathTile = tile(R.drawable.ic_breath, "호흡 가이드", breathTileSub, { toggleBreathing() })
-        reclineTile = tile(R.drawable.ic_seat, "등받이 젖히기", label(T.SMALL, T.MUTED, 400, "조금 젖히면 덜 흔들려요"), { recline() })
+        reclineTileSub = label(T.SMALL, T.MUTED)
+        reclineTile = tile(R.drawable.ic_seat, "등받이 젖히기", reclineTileSub, { onReclineTap() })
         turnTile = tile(R.drawable.ic_turn, "회전 예고", turnTileSub)
         tripView = threeCols(tripLeft, tripCenter, tileList(null, listOf(airTile, breathTile, reclineTile, turnTile)), wide)
 
@@ -1010,8 +1040,9 @@ class MainActivity : Activity() {
         preBreathSub.text = if (breathLeft > 0) "진행 중 · %d:%02d · 누르면 멈춰요".format(breathLeft / 60, breathLeft % 60) else "10부터 자동 · 눌러서 지금 시작"
         preBreathSub.setTextColor(if (breathLeft > 0) T.ACCENT else T.MUTED)
         preRecline.visibility = if (reclineSupported) View.VISIBLE else View.GONE
-        preReclineSub.text = when { reclined -> "젖혔어요"; seatLocked -> "정차(P) 중에만 · 지금은 움직일 수 없어요"; else -> "정차(P) 중에만 · 눌러서 조금 젖혀요" }
-        preRecline.isEnabled = !seatLocked && !reclined
+        preReclineSub.text = reclineText(seatLocked)
+        tileState(preRecline, reclineReserved)
+        preRecline.isEnabled = !reclined
         preRecline.alpha = if (preRecline.isEnabled) 1f else 0.5f
         preFoot.text = foot; preFoot.setTextColor(footInk)
         preFoot.visibility = if (foot.isEmpty()) View.GONE else View.VISIBLE
@@ -1065,8 +1096,11 @@ class MainActivity : Activity() {
         tileState(breathTile, breathLeft > 0)
         breathTileSub.text = if (breathLeft > 0) "진행 중 · %d:%02d · 누르면 멈춰요".format(breathLeft / 60, breathLeft % 60) else "눌러서 시작"
         breathTileSub.setTextColor(if (breathLeft > 0) T.ACCENT else T.MUTED)
-        // 등받이는 P단에서만 움직이므로 정차(P)했을 때만 보여줌
-        reclineTile.visibility = if (parked == true && !reclined && reclineSupported) View.VISIBLE else View.GONE
+        // 등받이는 P단에서만 움직임: 정차(P)면 바로, 주행 중이면 예약해 두고 정차하면 젖힘
+        reclineTile.visibility = if (!reclined && reclineSupported) View.VISIBLE else View.GONE
+        tileState(reclineTile, reclineReserved)
+        reclineTileSub.text = reclineText(seatLocked)
+        reclineTileSub.setTextColor(if (reclineReserved) T.ACCENT else T.MUTED)
         val turnRecent = turnAt?.let { comfort.durationS - it < 15 } == true
         tileState(turnTile, turnRecent)
         turnTileSub.text = if (turnRecent) (if (turnDir < 0) "곧 왼쪽으로 돌아요" else "곧 오른쪽으로 돌아요") else "대기 · 회전 전에 음성으로 알려요"

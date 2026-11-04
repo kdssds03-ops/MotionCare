@@ -7,6 +7,7 @@
 - **자동 케어**: 멀미 위험 지수(ISO 2631-1)가 주의 단계면 외기·풍량·온도(현재보다 1~2°C 낮게), 위험 단계면 호흡 가이드(분당 7.5회, 앰비언트 조명 + 짧은 소리로 박자, 흔들림이 이어지는 동안 5~15분)
 - **"속이 안 좋아요"** 버튼·음성: 즉시 케어 + 가장 가까운 휴게소를 내비 경유지로 추가 (위험 단계 3분 지속 시 자동 제안)
 - **회전 예고**: 회전 약 4초 전(내비 경로 안내 중) 또는 방향지시등이 켜질 때 짧은 소리와 "곧 왼쪽/곧 오른쪽"
+- **등받이 젖히기**: 정차(P) 중에는 바로, 주행 중에는 예약해 두면 P단으로 바뀔 때 음성으로 알리고 젖힘 (시트는 P단에서만 움직임)
 - **운전자 안내**: 급가속·급제동·급회전을 모아 두었다가 정차했을 때(또는 주행 종료 때) 한 번 음성으로
 - **주행 리포트**: 편안함 점수·멀미 응답·도움 된 케어 → 학습 결과 한 줄, 택시 플랫폼 전송 미리보기
 - 주간/야간 테마, 화면 회전·백그라운드 대응, 앱이 꺼져도 진행 중 주행 이어하기
@@ -30,7 +31,7 @@
 ## 테스트 환경
 - Pleos Connect Emulator 2.1.0 (Android 14), compileSdk 35, minSdk 28
 - Vehicle SDK 2.3.2, FusedLocation SDK 1.1.3, TextToSpeech SDK 3.3.1, SpeechToText SDK 3.3.1, NaviHelper SDK 3.0.5
-- 단위 테스트: `./gradlew testDebugUnitTest` 64개 (위험 지수·점수, 프로필 학습·저장, 케어 효과 학습, 호흡 박자·연장, 공기 케어 온도, 음성 판정, 휴게소 거리, 회전 예고 시점, 운전자 안내, 화면 대비)
+- 단위 테스트: `./gradlew testDebugUnitTest` 66개 (위험 지수·점수, 프로필 학습·저장, 케어 효과 학습, 호흡 박자·연장, 공기 케어 온도, 음성 판정, 휴게소 거리, 회전 예고 시점, 등받이 예약, 운전자 안내, 화면 대비)
 - 에뮬레이터 확인 결과: [docs/superpowers/2026-11-02-motioncare-v2-verification.md](docs/superpowers/2026-11-02-motioncare-v2-verification.md)
 
 ## 사용 데이터·제어
@@ -41,7 +42,7 @@
 | 방향지시등 | Vehicle `TurnSignal` |
 | 외기·풍량·온도 | Vehicle `HVAC` |
 | 호흡 가이드 조명 | Vehicle `Light` (앰비언트 밝기) + Android `ToneGenerator`(박자 소리) |
-| 등받이 | Vehicle `Seat` (P단에서만) |
+| 등받이 | Vehicle `Seat` (P단에서만) + `Gear` (주행 중 예약 → P단 전환 시 실행) |
 | 선호 온도 학습 | Vehicle `HVAC` 온도 변경 알림 |
 | 음성 안내 | TextToSpeech (ON_DEVICE) |
 | "속이 안 좋아요" 음성 | SpeechToText (ON_DEVICE) |

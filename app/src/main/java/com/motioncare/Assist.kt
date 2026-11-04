@@ -85,3 +85,18 @@ class CoachQueue {
         return harsh.also { harsh = 0 }
     }
 }
+
+/** 등받이 버튼을 눌렀을 때 할 일. Pleos는 P단에서만 시트를 움직이므로 주행 중에는 예약해 두고 정차(P)하면 젖힌다. */
+enum class ReclineTap { NOW, RESERVE, CANCEL, NONE }
+
+/** P단이거나 P단 여부를 모르면 바로 시도, 주행 중이면 예약(이미 예약했으면 취소) */
+fun reclineTap(parked: Boolean?, reclined: Boolean, reserved: Boolean): ReclineTap = when {
+    reclined -> ReclineTap.NONE
+    parked != false -> ReclineTap.NOW
+    reserved -> ReclineTap.CANCEL
+    else -> ReclineTap.RESERVE
+}
+
+/** 예약해 둔 등받이는 P단에 들어서는 순간 한 번만 젖힌다 */
+fun reclineOnPark(wasParked: Boolean?, nowParked: Boolean?, reserved: Boolean, reclined: Boolean): Boolean =
+    reserved && !reclined && nowParked == true && wasParked != true
