@@ -84,7 +84,7 @@ class ComfortTest {
         val smooth = drive(DemoCourse.SMOOTH); val winding = drive(DemoCourse.WINDING); val city = drive(DemoCourse.CITY)
         assertTrue("${smooth.score()} > ${winding.score()} > ${city.score()}", smooth.score() > winding.score() && winding.score() > city.score())
         assertEquals(Risk.LOW, smooth.maxRisk)          // 케어가 필요 없음
-        assertEquals(Risk.CAUTION, winding.maxRisk)     // 공기 케어까지
+        assertEquals(Risk.HIGH, winding.maxRisk)        // 계속 이어지는 커브: 호흡 가이드까지
         assertEquals(Risk.HIGH, city.maxRisk)           // 호흡 가이드까지
         // 세 코스 모두 같은 길이 (6분 20초)
         assertEquals(smooth.durationS, city.durationS, 0.01); assertEquals(winding.durationS, city.durationS, 0.01)
@@ -103,9 +103,29 @@ class ComfortTest {
         val smooth = runs(DemoCourse.SMOOTH); val winding = runs(DemoCourse.WINDING); val city = runs(DemoCourse.CITY)
         // 매번 조금씩 다름
         for (r in listOf(smooth, winding, city)) assertTrue(r.map { it.score() }.distinct().size >= 3)
-        // 그래도 코스 성격은 그대로: 부드러운 운전은 케어 없이 높은 점수, 산길은 공기 케어까지, 시내는 호흡 가이드까지
+        // 그래도 코스 성격은 그대로: 부드러운 운전은 케어 없이 높은 점수, 산길과 시내는 호흡 가이드까지
         assertTrue(smooth.all { it.maxRisk == Risk.LOW && it.score() >= 80 })
-        assertTrue(winding.all { it.maxRisk == Risk.CAUTION && it.score() in 75..92 })
-        assertTrue(city.all { it.maxRisk == Risk.HIGH && it.score() <= 55 })
+        assertTrue(winding.all { it.maxRisk == Risk.HIGH && it.score() in 55..75 })
+        assertTrue(city.all { it.maxRisk == Risk.HIGH && it.score() <= 60 })
+    }
+
+    /** 굽은 길의 좌우 흔들림(커브 하나 10초 이상)도 멀미 원인으로 충분히 잡혀야 함 (Donohew & Griffin 2004) */
+    @Test fun slowLateralSwayCounts() {
+        val c = Comfort()
+        var heading = 0.0; var t = 0.0
+        while (t < 300) {   // 20초 주기로 좌우로 이어지는 커브, 시속 43km
+            heading += Math.toDegrees(0.25 * 2 * Math.PI / 20 * kotlin.math.cos(2 * Math.PI * t / 20)) * 0.5
+            c.update(12.0, (heading + 360) % 360, 0.5); t += 0.5
+        }
+        assertTrue("maxRisk=${c.maxRisk}", c.maxRisk >= Risk.CAUTION)
+    }
+
+    /** 점수는 흔들림 양이 주로 정하고, 급조작 횟수는 감점의 절반을 넘지 않음 */
+    @Test fun swayNotHarshCountDrivesScore() {
+        val city = drive(DemoCourse.CITY)
+        val penalty = 100 - city.score()
+        assertTrue("harsh ${Comfort.SCORE_PER_EVENT * city.harshEvents} of $penalty", Comfort.SCORE_PER_EVENT * city.harshEvents < penalty / 2.0)
+        assertTrue("smooth ${drive(DemoCourse.SMOOTH).score()} vs winding ${drive(DemoCourse.WINDING).score()}",
+            drive(DemoCourse.SMOOTH).score() - drive(DemoCourse.WINDING).score() >= 20)
     }
 }

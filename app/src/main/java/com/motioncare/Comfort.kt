@@ -16,16 +16,18 @@ enum class Risk { LOW, CAUTION, HIGH }
  */
 class Comfort(var sensitivity: Double = 1.0) {
 
-    // ponytail: ISO Wf 정식 필터 대신 1차 고역(0.1Hz) + 1차 저역(0.5Hz) 근사.
+    // ponytail: ISO Wf 정식 필터 대신 1차 고역(hpHz) + 1차 저역(0.5Hz) 근사.
+    // 앞뒤는 0.1Hz부터. 좌우는 0.2Hz 아래의 느린 흔들림도 멀미를 일으켜서(Donohew & Griffin 2004)
+    // 커브 하나에 10~30초 걸리는 굽은 길까지 잡도록 0.03Hz부터.
     // 실차 로그로 비교해 차이가 크면 ISO 2631-1 Wf 계수로 교체.
-    private class Band {
+    private class Band(private val hpHz: Double) {
         private var started = false
         private var prevIn = 0.0
         private var hp = 0.0
         private var lp = 0.0
         fun apply(x: Double, dt: Double): Double {
             if (!started) { prevIn = x; started = true }
-            val rcH = 1 / (2 * PI * 0.1)
+            val rcH = 1 / (2 * PI * hpHz)
             hp = rcH / (rcH + dt) * (hp + x - prevIn)
             prevIn = x
             val rcL = 1 / (2 * PI * 0.5)
@@ -34,8 +36,8 @@ class Comfort(var sensitivity: Double = 1.0) {
         }
     }
 
-    private val bx = Band()
-    private val by = Band()
+    private val bx = Band(LONG_HP_HZ)
+    private val by = Band(LAT_HP_HZ)
     private var prevSpeed: Double? = null
     private var prevHeading: Double? = null
     private var windowEnergy = 0.0
@@ -105,7 +107,7 @@ class Comfort(var sensitivity: Double = 1.0) {
         windowMsdv = sqrt(windowEnergy)
     }
 
-    /** 0~100점. 급조작 횟수 + 시간 보정한 누적 MSDV로 감점. */
+    /** 0~100점. 주로 시간 보정한 누적 MSDV(멀미를 일으키는 흔들림 양)로, 급조작 횟수는 조금만 감점. */
     fun score(): Int {
         val minutes = durationS / 60
         if (minutes < 1) return 100
@@ -127,8 +129,11 @@ class Comfort(var sensitivity: Double = 1.0) {
         const val HIGH_MSDV = 10.0
         const val HARSH_LONG = 2.5   // m/s²
         const val HARSH_LAT = 3.0    // m/s²
-        const val SCORE_PER_EVENT = 1.5
-        const val SCORE_PER_RATE = 3.0
+        // 시뮬레이터 검증(2026-11-04): 급조작 비중이 크면 오래 흔들린 굽은 길이 높은 점수를 받아서 흔들림 쪽으로 옮김
+        const val SCORE_PER_EVENT = 0.5
+        const val SCORE_PER_RATE = 5.0
+        const val LONG_HP_HZ = 0.1   // 앞뒤 흔들림 필터 하한
+        const val LAT_HP_HZ = 0.03   // 좌우 흔들림 필터 하한
         // 차량 값: SDK에 축간거리 API가 없어 아이오닉 5 기준 상수. 차종별로 보정.
         const val WHEELBASE_M = 3.0
         const val STEER_RATIO = 14.0     // 핸들 각도 ÷ 바퀴 각도
