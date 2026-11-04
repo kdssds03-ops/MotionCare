@@ -97,4 +97,21 @@ class AssistTest {
         assertEquals(2, q.poll(0.0))
         assertEquals(0, q.poll(0.0))
     }
+
+    @Test fun reclineTapReservesWhileDriving() {
+        assertEquals(ReclineTap.NOW, reclineTap(parked = true, reclined = false, reserved = false))
+        assertEquals(ReclineTap.NOW, reclineTap(parked = null, reclined = false, reserved = false))   // 모르면 시도
+        assertEquals(ReclineTap.RESERVE, reclineTap(parked = false, reclined = false, reserved = false))
+        assertEquals(ReclineTap.CANCEL, reclineTap(parked = false, reclined = false, reserved = true))
+        assertEquals(ReclineTap.NONE, reclineTap(parked = true, reclined = true, reserved = false))
+    }
+
+    @Test fun reservedReclineRunsOnceWhenParking() {
+        assertTrue(reclineOnPark(wasParked = false, nowParked = true, reserved = true, reclined = false))
+        assertFalse(reclineOnPark(false, true, reserved = false, reclined = false))   // 예약 안 했으면 안 움직임
+        assertFalse(reclineOnPark(true, true, reserved = true, reclined = false))     // 이미 P단이던 중복 알림
+        assertFalse(reclineOnPark(false, false, reserved = true, reclined = false))   // 아직 주행 중
+        assertFalse(reclineOnPark(false, null, reserved = true, reclined = false))    // 기어를 모르면 안 움직임
+        assertFalse(reclineOnPark(false, true, reserved = true, reclined = true))     // 이미 젖힘
+    }
 }
