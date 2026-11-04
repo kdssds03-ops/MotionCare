@@ -145,6 +145,7 @@ class BreathView(c: Context) : View(c) {
         val left = ((untilMs - now) / 1000).toInt().coerceAtLeast(0)
         small.color = T.MUTED; small.textSize = T.SECTION * sp
         cv.drawText("남은 시간 %d:%02d".format(left / 60, left % 60), cx, cy + 58 * d, small)
+        cv.drawText("소리에 맞춰 · 눈은 창밖에", cx, cy + 58 * d + small.textSize * 1.4f, small)
         contentDescription = (if (inhale) "들이쉬세요" else "내쉬세요") + " · 남은 시간 ${left}초"
         if (untilMs > now) postInvalidateOnAnimation()
     }

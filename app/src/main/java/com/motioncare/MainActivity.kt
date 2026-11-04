@@ -41,6 +41,8 @@ import android.car.hardware.CarPropertyValue
 import android.car.hardware.property.CarPropertyManager
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -98,6 +100,8 @@ class MainActivity : Activity() {
     private var airAt: Double? = null
     private var airFan: Int? = null
     private var breathUntilMs = 0L
+    private var breathStartMs = 0L
+    private var tone: ToneGenerator? = null   // 호흡 박자·회전 예고용 짧은 소리
     private var turnAt: Double? = null
     private var turnDir = 0
     private var coachCount = 0
@@ -432,6 +436,8 @@ class MainActivity : Activity() {
             trace.push(comfort.windowMsdv * comfort.sensitivity)
             if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR)) airCare()
             if (r == Risk.HIGH && risk < Risk.HIGH && careOn(Care.BREATH)) breathing()
+            // 흔들림이 이어지는 동안 호흡 가이드 연장 (직접 멈춘 경우는 그대로)
+            breathUntilMs = breathUntil(breathStartMs, breathUntilMs, System.currentTimeMillis(), r)
             risk = r
             // 위험 단계가 3분 이어지면 주행당 한 번 휴게소 제안
             highSinceS = if (r == Risk.HIGH) highSinceS ?: comfort.durationS else null
@@ -477,16 +483,40 @@ class MainActivity : Activity() {
         }, 500)
     }
 
-    /** 호흡 가이드: 조명 4초 밝게(들숨) / 4초 어둡게(날숨), 분당 7.5회 (Stromberg 2015) */
+    /**
+     * 호흡 가이드: 4초 들숨 / 4초 날숨, 분당 7.5회 (Stromberg 2015).
+     * 최소 5분, 흔들림이 이어지면 최대 15분까지 연장(tick). 박자는 소리로 알려서 화면 대신 창밖을 볼 수 있게 함.
+     */
     private fun breathing(quiet: Boolean = false) {
-        // 이미 진행 중이면 다시 예약하지 않음: 여러 번 누르면 밝기 일정이 겹쳐 조명이 엉킴
+        // 이미 진행 중이면 다시 시작하지 않음: 박자 일정이 겹치지 않게
         if (breathActive()) return
-        if (!quiet) say("천천히 숨 쉬어 볼게요. 조명이 밝아지면 들이쉬고, 어두워지면 내쉬세요.")
+        if (!quiet) say("천천히 숨 쉬어 볼게요. 삐 소리가 나면 들이쉬고, 다음 소리에 내쉬세요. 눈은 앞쪽 창밖에 두세요.")
         caresThisTrip += Care.BREATH
-        breathUntilMs = System.currentTimeMillis() + 60_000
+        val now = System.currentTimeMillis()
+        breathStartMs = now
+        breathUntilMs = now + BREATH_MIN_MS
         if (tripOn) trace.mark("호흡 가이드")
-        for (i in 0 until 15) ui.postDelayed({ setAmbient(if (i == 14) null else i % 2 == 0) }, BREATH_TOKEN, i * 4000L)
+        ui.postDelayed(breathStep, BREATH_TOKEN, 0)
         render()
+    }
+
+    /** 박자 한 번: 조명 밝기 + 짧은 소리, 다음 박자 경계에 다시 예약. 끝나면 조명을 중간으로. */
+    private val breathStep = object : Runnable {
+        override fun run() {
+            if (!breathActive()) { setAmbient(null); return }
+            val e = System.currentTimeMillis() - breathStartMs
+            val inhale = isInhale(e)
+            setAmbient(inhale)
+            beep(if (inhale) ToneGenerator.TONE_PROP_BEEP else ToneGenerator.TONE_PROP_BEEP2, 150)
+            ui.postDelayed(this, BREATH_TOKEN, BREATH_PHASE_MS - e % BREATH_PHASE_MS)
+        }
+    }
+
+    private fun beep(type: Int, ms: Int) {
+        runCatching {
+            if (tone == null) tone = ToneGenerator(AudioManager.STREAM_MUSIC, 40)
+            tone?.startTone(type, ms)
+        }
     }
 
     private fun breathActive() = breathUntilMs > System.currentTimeMillis()
@@ -570,9 +600,9 @@ class MainActivity : Activity() {
     fun sickNow() {
         val air = careOn(Care.AIR); val breath = careOn(Care.BREATH)
         say(when {
-            air && breath -> "바로 도와드릴게요. 바깥 공기를 넣고, 조명에 맞춰 천천히 숨 쉬어 볼게요."
+            air && breath -> "바로 도와드릴게요. 바깥 공기를 넣고, 소리에 맞춰 천천히 숨 쉬어 볼게요."
             air -> "바로 도와드릴게요. 바깥 공기를 넣을게요. 앞쪽 창밖을 바라봐 주세요."
-            breath -> "바로 도와드릴게요. 조명에 맞춰 천천히 숨 쉬어 볼게요."
+            breath -> "바로 도와드릴게요. 소리에 맞춰 천천히 숨 쉬어 볼게요."
             else -> "알겠어요. 가까운 휴게소를 찾아볼게요."
         })
         // 1분 안에 이미 공기 케어를 했으면 공조 명령을 다시 보내지 않음 (반복 터치 대비)
@@ -983,7 +1013,7 @@ class MainActivity : Activity() {
         stateTag.setTextColor(if (caring) T.ACCENT else T.MUTED)
         stateDot.background = fill(if (caring) T.ACCENT else T.FAINT, dp(999).toFloat())
         stateCare.text = when {
-            breathLeft > 0 -> "조명이 밝아지면 들이쉬고\n어두워지면 내쉬세요"
+            breathLeft > 0 -> "소리가 나면 들이쉬고\n다음 소리에 내쉬세요"
             airAt != null -> "바깥 공기를 넣고 바람을 세게 했어요"
             else -> "흔들림이 커지면 차가 먼저\n바깥 공기를 넣어요"
         }
@@ -992,11 +1022,11 @@ class MainActivity : Activity() {
         chipName.text = riskName(risk); chipName.setTextColor(warnInk)
 
         // 가운데: 호흡 가이드 중에는 호흡 원, 아니면 차 실내 그림
-        val breathStart = breathUntilMs - 60_000
+        val breathStart = breathStartMs
         cabin.update(seat, airAt != null, breathLeft > 0, breathStart, reclined)
         breathView.visibility = if (breathLeft > 0) View.VISIBLE else View.GONE
         cabin.visibility = if (breathLeft > 0) View.GONE else View.VISIBLE
-        if (breathLeft > 0 && breathView.startMs != breathStart) { breathView.startMs = breathStart; breathView.untilMs = breathUntilMs; breathView.invalidate() }
+        if (breathLeft > 0 && (breathView.startMs != breathStart || breathView.untilMs != breathUntilMs)) { breathView.startMs = breathStart; breathView.untilMs = breathUntilMs; breathView.invalidate() }
 
         tileState(airTile, airAt != null)
         airTileSub.text = if (airAt != null) "켜짐 · 바깥 공기" + (airFan?.let { " · 풍량 ${it}단" } ?: "") else "대기 · 흔들리면 바깥 공기를 넣어요"
@@ -1035,6 +1065,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
+        tone?.release()
         vehicle.getTurnSignal().unregisterTurnSignalState(signalListener)
         vehicle.getSteeringWheel().unregisterSteeringWheelAngle(steerListener)
         vehicle.getGear().unregisterGearSelection(gearListener)
