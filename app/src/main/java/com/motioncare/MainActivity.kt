@@ -751,7 +751,11 @@ class MainActivity : Activity() {
             null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
         demo = null
         report = ReportState(trip, comfort.harshEvents)
-        say("주행이 끝났어요. 편안함 점수는 ${comfort.score()}점이에요. 멀미는 어땠는지 알려주세요.")
+        // 주행이 끝나면 차가 선 상태: 주행 중 쌓인 운전자 코칭을 종료 안내에 붙여 한 번에
+        val harsh = coachQ.poll(0.0)
+        coachCount += harsh
+        val tip = if (harsh > 0) " 출발과 제동을 조금 더 천천히 하면 동승자가 더 편해요." else ""
+        say("주행이 끝났어요. 편안함 점수는 ${comfort.score()}점이에요.$tip 멀미는 어땠는지 알려주세요.")
         show(Screen.Report)
     }
 
