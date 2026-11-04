@@ -26,4 +26,17 @@ class BreathTest {
     @Test fun matchesBreathCircle() {   // 조명·소리와 화면 원이 같은 박자
         for (e in listOf(0L, 3_999L, 4_000L, 7_999L, 8_000L, 123_456L)) assertEquals(breathPhase(0, e).second, isInhale(e))
     }
+
+    @Test fun autoStartsOnRiseToHigh() {
+        assertTrue(autoStartBreath(Risk.HIGH, Risk.CAUTION, userStopped = false))
+        assertFalse(autoStartBreath(Risk.HIGH, Risk.HIGH, userStopped = false))
+    }
+
+    @Test fun userStopSurvivesHighFlicker() =   // 직접 멈춘 뒤 주의↔위험을 오가도 다시 켜지지 않음
+        assertFalse(autoStartBreath(Risk.HIGH, Risk.CAUTION, userStopped = true))
+
+    @Test fun userStopClearsOnlyWhenCalm() {
+        assertTrue(keepUserStop(Risk.CAUTION, userStopped = true))
+        assertFalse(keepUserStop(Risk.LOW, userStopped = true))
+    }
 }

@@ -59,17 +59,17 @@ class ProfileTest {
     }
 
     @Test fun careTargetLowersOneToTwo() {
-        assertEquals(22f, careTarget(24f, 21f), 1e-6f)     // 선호가 너무 낮으면 -2까지만
-        assertEquals(23f, careTarget(24f, 23.5f), 1e-6f)   // 선호가 너무 높으면 -1
-        assertEquals(21.5f, careTarget(23f, 21.5f), 1e-6f) // 범위 안이면 선호 그대로
+        assertEquals(22f, careTarget(24f, 21f)!!, 1e-6f)     // 선호가 너무 낮으면 -2까지만
+        assertEquals(23f, careTarget(24f, 23.5f)!!, 1e-6f)   // 선호가 너무 높으면 -1
+        assertEquals(21.5f, careTarget(23f, 21.5f)!!, 1e-6f) // 범위 안이면 선호 그대로
     }
 
     @Test fun neverWarmer() {
-        assertEquals(18f, careTarget(19f, 21f), 1e-6f)
-        assertEquals(17f, careTarget(17f, 21f), 1e-6f)     // 바닥 18보다 추운 차도 데우지 않음
+        assertEquals(18f, careTarget(19f, 21f)!!, 1e-6f)
+        assertEquals(17f, careTarget(17f, 21f)!!, 1e-6f)     // 바닥 18보다 추운 차도 데우지 않음
     }
 
-    @Test fun unknownCurrentUsesPreference() = assertEquals(21f, careTarget(null, 21f), 1e-6f)
+    @Test fun unknownCurrentLeavesTemperature() = assertEquals(null, careTarget(null, 21f))
 
     @Test fun reEnableResetsStats() {
         val off = base.copy(cares = mapOf(Care.AIR to CareStat(runs = 3, helped = 0, off = true)))
