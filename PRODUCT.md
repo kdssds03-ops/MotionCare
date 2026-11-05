@@ -32,10 +32,10 @@ The care is proactive and runs inside the car itself. Risk is computed from a st
 ## Capabilities and Constraints
 
 - **Measure:** sensitivity profile (MSSQ-Short, reduced to 3 questions; low/normal/high), live risk index (주의 / 위험 thresholds scaled by sensitivity), comfort score 0–100 with harsh-maneuver counts, MISC 0–10 feedback that tunes each person's thresholds.
-- **Care:** air care (outside air, fan up, temperature down), breathing guide (ambient light 4 s brighter / 4 s dimmer, plus voice), turn warnings (navigation turn-by-turn info or the turn signal, spoken), seatback recline (only in P, only after the passenger confirms), "속이 안 좋아요" button or voice that adds the nearest rest area as a navigation waypoint (auto-suggested after 3 minutes at 위험), favorite music (planned).
+- **Care:** air care (outside air, fan up, temperature down; fan, temperature and light change only in the passenger's zone and are restored after the trip), breathing guide (ambient light 4 s brighter / 4 s dimmer, plus voice), turn warnings (navigation turn-by-turn info or the turn signal, spoken), seatback recline (only in P, only after the passenger confirms), "속이 안 좋아요" button or voice that adds the nearest rest area as a navigation waypoint (auto-suggested after 3 minutes at 위험), favorite music (planned).
 - **Safety rules:** voice only for the driver and as few on-screen alerts as possible; seat changes are small and need the passenger's confirmation; claims say "helps relieve" (완화에 도움), never "treats."
 - **Taxi integration** is a mockup (preview card only). The driver opts in to sharing; the score works as an incentive, not surveillance; data is anonymized and collected with consent.
-- Stack: Kotlin, Android (compileSdk 35, minSdk 28), Pleos Vehicle / FusedLocation / TTS / STT / NaviHelper SDKs. There are 85 unit tests, including UI contrast.
+- Stack: Kotlin, Android (compileSdk 35, minSdk 28), Pleos Vehicle / FusedLocation / TTS / STT / NaviHelper SDKs. There are 96 unit tests, including UI contrast.
 
 ## Brand Commitments
 

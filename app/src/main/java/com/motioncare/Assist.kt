@@ -130,3 +130,27 @@ class AutoTrip {
         const val END_AFTER_S = 180.0
     }
 }
+
+/**
+ * 케어할 구역: 탑승자 자리를 포함한 구역만 (운전석에 조명 깜빡임·찬바람이 가지 않게).
+ * 그런 구역이 없으면 동승석 구역, 그것도 없으면(차 전체가 한 구역) 전부.
+ */
+fun <A, S> careZones(areas: Collection<A>, seatsOf: (A) -> Collection<S>, seat: S, fallback: S): List<A> =
+    areas.filter { seat in seatsOf(it) }
+        .ifEmpty { areas.filter { fallback in seatsOf(it) } }
+        .ifEmpty { areas.toList() }
+
+/** 주행이 끝나면 케어 전 온도로. 케어 뒤 사람이 직접 바꿨으면(앱이 보낸 값과 다르면) 그 선택을 그대로 둔다. */
+fun restoreTemp(original: Float?, sent: Float?, now: Float?): Float? = when {
+    original == null || sent == null -> null
+    now != null && isUserTemp(sent, now) -> null
+    else -> original
+}
+
+/** 자동 공기 케어는 한 번 켠 뒤 10분이 지나야 다시: 탑승자가 줄인 풍량을 '주의' 단계마다 다시 올리지 않게 */
+fun autoAirAgain(lastAirS: Double?, nowS: Double): Boolean = lastAirS == null || nowS - lastAirS >= AIR_AGAIN_S
+const val AIR_AGAIN_S = 600.0
+
+/** 같은 이름의 회전이 이어질 때: 남은 거리가 30m 넘게 다시 늘면 앞 회전을 지난 것이므로 새 회전으로 본다 */
+fun nextTurnKey(lastKey: String?, key: String, lastDistM: Double?, distM: Double): String? =
+    if (lastKey == key && lastDistM != null && distM > lastDistM + 30) null else lastKey

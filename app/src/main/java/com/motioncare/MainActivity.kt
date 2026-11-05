@@ -139,6 +139,13 @@ class MainActivity : Activity() {
     // 이번 주행에서 처음 공기 케어를 켤 때의 온도. 케어가 여러 번 켜져도 이 값 기준으로만 낮춤(계속 내려가지 않게)
     private val airBaseTemp = HashMap<SeatArea, Float>()
     private val tempListeners = HashMap<SeatArea, HvacTemperatureListener>()
+    // 케어 전 차량 상태: 주행이 끝나거나 호흡 가이드가 멈추면 되돌림
+    private val origRecirc = HashMap<SeatArea, Boolean>()
+    private val origAuto = HashMap<SeatArea, Boolean>()
+    private val origFan = HashMap<SeatArea, Int>()
+    private val origAmbient = HashMap<SeatArea, Int>()
+    private var lastTbtDist: Double? = null
+    private var ambientTouched = false
     private var tempSentAtMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -148,25 +155,7 @@ class MainActivity : Activity() {
         show(Screen.RiderSelect)
         offerResume()
 
-        vehicle = Vehicle(this).apply { initialize() }
-        val hvac = vehicle.getHVAC()
-        hvac.checkHvacPowerCapabilities({ _, list -> powerAreas = list }, ::fail)
-        hvac.checkHvacRecirculationCapabilities({ _, list -> recircAreas = list }, ::fail)
-        hvac.checkHvacFanSpeedCapabilities({ _, map -> fanMax = map.mapValues { it.value.maxValue } }, ::fail)
-        hvac.checkHvacTemperatureCapabilities({ _, map: Map<SeatArea, AreaBounds<Float>> ->
-            tempRange = map.mapValues { it.value.minValue..it.value.maxValue }
-            tempRange.keys.filter { it !in tempListeners }.forEach { a ->
-                tempListeners[a] = tempListener(a).also { hvac.registerHvacTemperature(a, it) }
-            }
-        }, ::fail)
-        vehicle.getSeat().checkMoveSeatBackrestAngleCapabilities({ _, list -> reclineAreas = list; ui.post { render() } }, { reclineAreas = null })
-        vehicle.getLight().checkAmbientLightBrightnessCapabilities({ _, map ->
-            ambient = map.mapValues { it.value.minValue..it.value.maxValue }
-        }, ::fail)
-        vehicle.getTurnSignal().registerTurnSignalState(signalListener)
-        vehicle.getSteeringWheel().registerSteeringWheelAngle(steerListener)
-        vehicle.getGear().getCurrentGearSelectionState({ gearListener.onSelected(it) }, ::fail)
-        vehicle.getGear().registerGearSelection(gearListener)
+        vehicle = Vehicle(this).apply { runCatching { initialize() }.onFailure { fail(Exception("차량에 연결할 수 없어요")) } }
 
         tts = TextToSpeech(applicationContext, Mode.ON_DEVICE)
         tts.initialize(object : OnInitializeListener {
@@ -177,8 +166,8 @@ class MainActivity : Activity() {
         location = FusedLocation(this)
         stt = SpeechToText(applicationContext, ai.pleos.playground.stt.constant.Mode.ON_DEVICE)
         navi = NaviHelper(this)
-        val perms = arrayOf(Car.PERMISSION_SPEED, "pleos.car.permission.FUSED_LOCATION", "pleos.car.permission.STT_SERVICE",
-            "pleos.car.permission.NAVI_ROUTE", "pleos.car.permission.NAVI_ROUTE_SEARCH")
+        // 매니페스트의 권한을 모두 요청: adb install -g 없이 Android Studio로 설치해도 공조·조명·시트 제어가 되게
+        val perms = packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty()
         if (perms.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) startSensors()
         else requestPermissions(perms, 1)
 
@@ -324,8 +313,39 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, p: Array<String>, r: IntArray) = startSensors()
 
+    /**
+     * 차량 기능 확인과 신호 구독: 권한을 받은 뒤에. 하나가 실패해도 나머지는 계속.
+     * (Pleos가 아닌 기기나 권한 거부에서도 앱이 꺼지지 않고 데모 주행은 가능)
+     */
+    private fun startVehicle() {
+        val hvac = runCatching { vehicle.getHVAC() }.getOrNull()
+        fun step(what: () -> Unit) = runCatching(what).onFailure { fail(it as? Exception ?: Exception(it)) }
+        step { hvac!!.checkHvacPowerCapabilities({ _, list -> powerAreas = list }, ::fail) }
+        step { hvac!!.checkHvacRecirculationCapabilities({ _, list -> recircAreas = list }, ::fail) }
+        step { hvac!!.checkHvacFanSpeedCapabilities({ _, map -> fanMax = map.mapValues { it.value.maxValue } }, ::fail) }
+        step {
+            hvac!!.checkHvacTemperatureCapabilities({ _, map: Map<SeatArea, AreaBounds<Float>> ->
+                tempRange = map.mapValues { it.value.minValue..it.value.maxValue }
+                tempRange.keys.filter { it !in tempListeners }.forEach { a ->
+                    tempListeners[a] = tempListener(a).also { hvac.registerHvacTemperature(a, it) }
+                }
+            }, ::fail)
+        }
+        step { vehicle.getSeat().checkMoveSeatBackrestAngleCapabilities({ _, list -> reclineAreas = list; ui.post { render() } }, { reclineAreas = null }) }
+        step {
+            vehicle.getLight().checkAmbientLightBrightnessCapabilities({ _, map ->
+                ambient = map.mapValues { it.value.minValue..it.value.maxValue }
+            }, ::fail)
+        }
+        step { vehicle.getTurnSignal().registerTurnSignalState(signalListener) }
+        step { vehicle.getSteeringWheel().registerSteeringWheelAngle(steerListener) }
+        step { vehicle.getGear().getCurrentGearSelectionState({ gearListener.onSelected(it) }, ::fail) }
+        step { vehicle.getGear().registerGearSelection(gearListener) }
+    }
+
     // 권한이 거부돼도 앱은 꺼지지 않고 데모 주행은 가능하도록 실패만 기록
     private fun startSensors() {
+        startVehicle()
         // 음성 인식·내비는 실패해도 버튼 흐름은 그대로 동작 (안내만 바뀜)
         runCatching {
             stt.initialize(object : ai.pleos.playground.stt.listener.OnInitializeListener {
@@ -338,7 +358,10 @@ class MainActivity : Activity() {
             car = Car.createCar(this)
             (car?.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager)?.registerCallback(
                 object : CarPropertyManager.CarPropertyEventCallback {
-                    override fun onChangeEvent(v: CarPropertyValue<*>) { liveSpeed = abs((v.value as Float).toDouble()) }
+                    override fun onChangeEvent(v: CarPropertyValue<*>) {
+                        val s = (v.value as? Number)?.toDouble() ?: return   // 값이 비거나 다른 형식이면 무시 (콜백 안 크래시 방지)
+                        liveSpeed = abs(s)
+                    }
                     override fun onErrorEvent(propId: Int, zone: Int) {}
                 },
                 VehiclePropertyIds.PERF_VEHICLE_SPEED, CarPropertyManager.SENSOR_RATE_NORMAL
@@ -455,7 +478,7 @@ class MainActivity : Activity() {
             val r = comfort.update(curSpeed, t?.heading ?: liveHeading, DT, if (t == null) liveSteer else null)
             trace.push(comfort.windowMsdv * comfort.sensitivity)
             route.add(curSpeed, t?.heading ?: liveHeading, DT, r)
-            if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR)) airCare()
+            if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR) && autoAirAgain(airAt, comfort.durationS)) airCare()
             breathStoppedByUser = keepUserStop(r, breathStoppedByUser)
             if (autoStartBreath(r, risk, breathStoppedByUser) && careOn(Care.BREATH)) breathing()
             // 흔들림이 이어지는 동안 호흡 가이드 연장 (직접 멈춘 경우는 그대로)
@@ -484,24 +507,51 @@ class MainActivity : Activity() {
         trace.mark("공기 케어")
         if (tripOn) route.mark(Care.AIR)
         val hvac = vehicle.getHVAC()
+        // 풍량·온도는 탑승자 자리 구역만 (운전석에 찬바람이 가지 않게). 외기 유입은 차 전체 공기라 모든 구역.
+        val fans = mine(fanMax.keys)
+        // 케어 전 상태를 주행당 한 번 기억해 두었다가 주행이 끝나면 되돌림 (restoreAir)
+        recircAreas.filter { it !in origRecirc }.forEach { a ->
+            hvac.getHvacRecirculationState(a, { v -> if (v != null) ui.post { origRecirc.putIfAbsent(a, v) } }, { _ -> })
+        }
+        fans.filter { it !in origAuto }.forEach { a ->
+            hvac.getHvacAutoState(a, { v -> if (v != null) ui.post { origAuto.putIfAbsent(a, v) } }, { _ -> })
+            hvac.getHvacFanSpeed(a, { v -> if (v != null) ui.post { origFan.putIfAbsent(a, v) } }, { _ -> })
+        }
         powerAreas.forEach { hvac.setHvacPower(it, true, onFailed = ::fail) }
         // ponytail: 전원 켜짐 콜백을 기다리지 않고 0.5초 뒤 설정. 실차에서 실패가 보이면 onComplete로 연결.
         ui.postDelayed({
             recircAreas.forEach { hvac.setHvacRecirculation(it, false, onFailed = ::fail) }
             // 자동 공조 중에는 풍량을 직접 못 바꾸므로 자동을 끈 뒤 설정
-            fanMax.forEach { (a, max) ->
-                val level = (max * 2 + 2) / 3
+            fans.forEach { a ->
+                val level = (fanMax.getValue(a) * 2 + 2) / 3
                 hvac.setHvacAuto(a, false,
                     onComplete = { _, _ -> hvac.setHvacFanSpeed(a, level, onComplete = { _, _ -> airFan = level }, onFailed = ::fail) },
                     onFailed = ::fail)
             }
-            // 좌석별 온도를 0.3초 간격으로: Pleos 에뮬레이터는 거의 동시에 온 두 요청 중
-            // 마지막 좌석 변경만 알려서, 앞 좌석(운전석)이 화면과 차량 서비스에 옛 값으로 남았음
-            tempRange.entries.forEachIndexed { i, (a, r) ->
-                ui.postDelayed({ lowerTemp(a, r) }, i * TEMP_GAP_MS)
-            }
+            careTempArea()?.let { a -> lowerTemp(a, tempRange.getValue(a)) }
         }, 500)
     }
+
+    /** 주행이 끝나면 공기 케어 전 상태로: 내·외기, 자동 공조(또는 원래 풍량), 온도. 사람이 직접 바꾼 온도는 그대로 둔다. */
+    private fun restoreAir() {
+        if (airAt == null) return
+        val hvac = runCatching { vehicle.getHVAC() }.getOrNull() ?: return
+        origRecirc.forEach { (a, v) -> hvac.setHvacRecirculation(a, v, onFailed = ::fail) }
+        origAuto.forEach { (a, auto) ->
+            if (auto) hvac.setHvacAuto(a, true, onFailed = ::fail)
+            else origFan[a]?.let { hvac.setHvacFanSpeed(a, it, onFailed = ::fail) }
+        }
+        airBaseTemp.forEach { (a, t) ->
+            restoreTemp(t, sentTemp[a], observedTemp[a])?.let {
+                sentTemp[a] = it   // 앱이 되돌린 값을 선호 온도로 배우지 않게
+                hvac.setHvacTemperature(a, it, TemperatureUnit.CELSIUS, onFailed = ::fail)
+            }
+        }
+        origRecirc.clear(); origAuto.clear(); origFan.clear()
+    }
+
+    /** 탑승자 자리를 포함한 구역 (없으면 동승석, 차 전체가 한 구역이면 그 구역) */
+    private fun <A : SeatArea> mine(areas: Collection<A>) = careZones(areas, { it.values.toList() }, careSeat(), SeatValue.ROW_1_RIGHT)
 
     /**
      * 공기 케어 온도 한 좌석: 이번 주행 기준 온도보다 1~2°C 낮게.
@@ -571,14 +621,25 @@ class MainActivity : Activity() {
 
     private fun toggleBreathing() = if (breathActive()) { stopBreathing(); breathStoppedByUser = true } else breathing()
 
-    /** 앰비언트 밝기: true = 최대(들숨), false = 최소(날숨), null = 중간 */
+    /**
+     * 앰비언트 밝기, 탑승자 자리 구역만 (운전석 쪽 조명은 깜빡이지 않게).
+     * true = 최대(들숨), false = 최소(날숨), null = 호흡 전 밝기로 되돌림 (모르면 중간)
+     */
     private fun setAmbient(bright: Boolean?) {
-        val light = vehicle.getLight()
-        ambient.forEach { (area, range) ->
-            val v = when (bright) { true -> range.last; false -> range.first; null -> (range.first + range.last) / 2 }
+        if (bright == null && !ambientTouched) return   // 호흡 가이드를 켠 적 없으면 조명을 건드리지 않음
+        ambientTouched = bright != null
+        val light = runCatching { vehicle.getLight() }.getOrNull() ?: return
+        mine(ambient.keys).forEach { area ->
+            val range = ambient.getValue(area)
+            if (bright != null && area !in origAmbient)
+                light.getAmbientLightBrightness(area, { v -> if (v != null) ui.post { origAmbient.putIfAbsent(area, v) } }, { _ -> })
+            val v = when (bright) { true -> range.last; false -> range.first; null -> origAmbient.remove(area) ?: ((range.first + range.last) / 2) }
             light.setAmbientLightBrightness(area, v, { _, _ -> }, ::fail)
         }
     }
+
+    /** 등받이 판단용 P단 여부. 데모 주행은 가상으로 달리는 중이라 실제 기어와 상관없이 '주행 중'으로 본다. */
+    private fun seatParked(): Boolean? = if (demo != null) false else parked
 
     private fun reclineText(seatLocked: Boolean) = when {
         reclined -> "젖혔어요"
@@ -589,7 +650,7 @@ class MainActivity : Activity() {
 
     /** 등받이 버튼: P단이면 바로 젖히고, 주행 중이면 예약/취소 */
     private fun onReclineTap() {
-        when (reclineTap(parked, reclined, reclineReserved)) {
+        when (reclineTap(seatParked(), reclined, reclineReserved)) {
             ReclineTap.NOW -> recline()
             ReclineTap.RESERVE -> { reclineReserved = true; say("예약했어요. 정차하면 등받이를 조금 젖힐게요") }
             ReclineTap.CANCEL -> { reclineReserved = false; say("등받이 예약을 취소했어요") }
@@ -636,6 +697,8 @@ class MainActivity : Activity() {
         if (t == null || !careOn(Care.TURN_CUE)) return
         val side = turnSide(t.type.name)
         val key = "${t.type}-${t.description}"
+        lastTbtKey = nextTurnKey(lastTbtKey, key, lastTbtDist, t.distance.toDouble())   // 같은 이름 회전이 이어져도 다시 예고
+        lastTbtDist = t.distance.toDouble()
         if (side == 0 || !shouldCueTurn(t.distance.toDouble(), curSpeed, key, lastTbtKey)) return
         lastTbtKey = key
         caresThisTrip += Care.TURN_CUE
@@ -803,7 +866,8 @@ class MainActivity : Activity() {
         airAt = null; airFan = null; airBaseTemp.clear(); coachQ.clear(); breathStoppedByUser = false; turnAt = null; turnDir = 0; coachCount = 0; problem = null; reclined = false; reclineReserved = false
         caresThisTrip.clear(); offer = null; pendingRest = null; assistNote = null
         ui.removeCallbacks(askRest)
-        highSinceS = null; autoOffered = false; lastTbtKey = null
+        highSinceS = null; autoOffered = false; lastTbtKey = null; lastTbtDist = null
+        origRecirc.clear(); origAuto.clear(); origFan.clear()
         risk = Risk.LOW
         trace.clear()
     }
@@ -818,7 +882,10 @@ class MainActivity : Activity() {
         demo = null
         report = ReportState(trip, comfort.harshEvents, route)
         // 주행이 끝날 때 차가 서 있으면: 주행 중 쌓인 운전자 코칭을 종료 안내에 붙여 한 번에 (달리는 중이면 말하지 않음)
-        stopBreathing()   // 리포트 화면에서 박자 소리가 계속 나지 않게
+        stopBreathing()   // 리포트 화면에서 박자 소리가 계속 나지 않게 (조명도 원래 밝기로)
+        restoreAir()
+        // 데모 주행 중 예약한 등받이: 가상 주행이 끝나면 실제 차는 서 있으므로 이때 젖힘
+        if (trip.demo && reclineReserved && parked != false) { reclineReserved = false; recline() }
         // 데모는 가상 주행이라 실제 차는 서 있음 → 실제 속도 기준은 실주행에만
         val harsh = coachQ.poll(if (trip.demo) 0.0 else liveSpeed)
         coachCount += harsh
@@ -1055,7 +1122,7 @@ class MainActivity : Activity() {
         val breathLeft = ((breathUntilMs - System.currentTimeMillis()) / 1000).toInt()
         val foot = problem?.let { "차량 응답: $it" } ?: if (lastSpoken.isEmpty()) "" else "마지막 음성 · $lastSpoken"
         val footInk = if (problem != null) T.NEG else T.FAINT
-        val seatLocked = parked == false   // 등받이는 P단에서만 움직임
+        val seatLocked = seatParked() == false   // 등받이는 P단에서만 움직임
 
         // --- 주행 전 ---
         gauge.set(if (started) idx else null, if (started) riskName(risk) else "대기",
@@ -1164,18 +1231,22 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
-        tone?.release()
-        vehicle.getTurnSignal().unregisterTurnSignalState(signalListener)
-        vehicle.getSteeringWheel().unregisterSteeringWheelAngle(steerListener)
-        vehicle.getGear().unregisterGearSelection(gearListener)
-        if (location.isSupported()) location.unregisterFusedLocationCallback(locationListener)
-        vehicle.release()
-        location.release()
-        tts.release()
-        runCatching { stt.removeListener(sttListener); stt.release() }
-        runCatching { navi.removeListener(naviListener); navi.release() }
-        tempListeners.forEach { (a, l) -> runCatching { vehicle.getHVAC().unregisterHvacTemperature(a, l) } }
-        car?.disconnect()
+        // 리스너 해제를 release보다 먼저, 하나가 실패해도 나머지는 계속 (등록 안 된 상태에서도 안전)
+        fun quietly(what: () -> Unit) { runCatching(what) }
+        quietly { tone?.release() }
+        quietly { vehicle.getTurnSignal().unregisterTurnSignalState(signalListener) }
+        quietly { vehicle.getSteeringWheel().unregisterSteeringWheelAngle(steerListener) }
+        quietly { vehicle.getGear().unregisterGearSelection(gearListener) }
+        tempListeners.forEach { (a, l) -> quietly { vehicle.getHVAC().unregisterHvacTemperature(a, l) } }
+        quietly { if (location.isSupported()) location.unregisterFusedLocationCallback(locationListener) }
+        quietly { stt.removeListener(sttListener) }
+        quietly { navi.removeListener(naviListener) }
+        quietly { vehicle.release() }
+        quietly { location.release() }
+        quietly { tts.release() }
+        quietly { stt.release() }
+        quietly { navi.release() }
+        quietly { car?.disconnect() }
         super.onDestroy()
     }
 
