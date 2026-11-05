@@ -31,7 +31,7 @@
 ## 테스트 환경
 - Pleos Connect Emulator 2.1.0 (Android 14), compileSdk 35, minSdk 28
 - Vehicle SDK 2.3.2, FusedLocation SDK 1.1.3, TextToSpeech SDK 3.3.1, SpeechToText SDK 3.3.1, NaviHelper SDK 3.0.5
-- 단위 테스트: `./gradlew testDebugUnitTest` 66개 (위험 지수·점수, 프로필 학습·저장, 케어 효과 학습, 호흡 박자·연장, 공기 케어 온도, 음성 판정, 휴게소 거리, 회전 예고 시점, 등받이 예약, 운전자 안내, 화면 대비)
+- 단위 테스트: `./gradlew testDebugUnitTest` 74개 (위험 지수·점수, 주행 궤적, 프로필 학습·저장, 케어 효과 학습, 호흡 박자·연장, 공기 케어 온도, 음성 판정, 휴게소 거리, 회전 예고 시점, 등받이 예약, 운전자 안내, 화면 대비)
 - 에뮬레이터 확인 결과: [docs/superpowers/2026-11-02-motioncare-v2-verification.md](docs/superpowers/2026-11-02-motioncare-v2-verification.md)
 
 ## 사용 데이터·제어
