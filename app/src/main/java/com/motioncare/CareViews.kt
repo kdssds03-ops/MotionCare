@@ -227,3 +227,97 @@ class ScoreView(c: Context) : View(c) {
         cv.drawText("편안함 점수", cx, cy + big.textSize * 0.3f + 34 * d, txt)
     }
 }
+
+/**
+ * 리포트의 지나온 길: 속도와 진행 방향으로 그린 모양 (지도 아님).
+ * 흔들림이 클수록 진하고 굵은 선(색만으로 구분하지 않게). 청록 점 = 그곳에서 케어 시작. 빈 원 = 출발, 찬 원 = 도착.
+ */
+class RouteView(c: Context, private val route: RouteTrace) : View(c) {
+    private val d = c.resources.displayMetrics.density
+    private val sp = c.resources.displayMetrics.scaledDensity
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val name = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.create(Typeface.DEFAULT, 600, false) }
+    private val note = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 6 * c.resources.displayMetrics.density; strokeJoin = Paint.Join.ROUND }
+    private val icons = HashMap<Care, android.graphics.drawable.Drawable>()
+
+    init {
+        minimumHeight = (260 * d).toInt()
+        val high = route.points.count { it.risk == Risk.HIGH } * 100 / route.points.size
+        contentDescription = "지나온 길 · 많이 흔들린 구간 약 $high% · 케어 ${route.marks.size}번 시작"
+    }
+
+    private fun ink(r: Risk) = when (r) { Risk.LOW -> T.FAINT; Risk.CAUTION -> blend(T.WARN, T.SURFACE, 0.35f); Risk.HIGH -> T.WARN }
+    private fun width(r: Risk) = when (r) { Risk.LOW -> 4f; Risk.CAUTION -> 7f; Risk.HIGH -> 10f } * d
+
+    override fun onDraw(cv: Canvas) {
+        val pts = route.points
+        val legendH = 44 * d
+        val pad = 36 * d
+        val l = pad; val t = pad; val r = width - pad - 110 * d; val b = height - legendH - pad   // 오른쪽은 케어 이름 자리
+        note.color = T.MUTED; note.textSize = T.SMALL * sp
+        drawLegend(cv, height - 18 * d)
+        val minX = pts.minOf { it.x }; val maxX = pts.maxOf { it.x }
+        val minY = pts.minOf { it.y }; val maxY = pts.maxOf { it.y }
+        if (pts.size < 3 || maxOf(maxX - minX, maxY - minY) < 30) {
+            val s = "지나온 길이 짧아 그리지 않았어요"
+            cv.drawText(s, (width - note.measureText(s)) / 2, (t + b) / 2, note); return
+        }
+        val k = minOf((r - l) / (maxX - minX).coerceAtLeast(1.0), (b - t) / (maxY - minY).coerceAtLeast(1.0)).toFloat()
+        val ox = (l + r) / 2 - ((minX + maxX) / 2).toFloat() * k
+        val oy = (t + b) / 2 + ((minY + maxY) / 2).toFloat() * k   // 북쪽이 위
+        fun sx(p: RoutePoint) = ox + p.x.toFloat() * k
+        fun sy(p: RoutePoint) = oy - p.y.toFloat() * k
+
+        // 편안한 구간부터 그려서 흔들린 구간이 위에 오게
+        for (level in Risk.entries) {
+            line.color = ink(level); line.strokeWidth = width(level)
+            for (i in 1 until pts.size) {
+                val p = pts[i]
+                if (p.risk == level) cv.drawLine(sx(pts[i - 1]), sy(pts[i - 1]), sx(p), sy(p), line)
+            }
+        }
+        // 출발(빈 원) · 도착(찬 원)
+        ring.color = T.TEXT; ring.strokeWidth = 3 * d; dot.color = T.SURFACE
+        cv.drawCircle(sx(pts.first()), sy(pts.first()), 8 * d, dot); cv.drawCircle(sx(pts.first()), sy(pts.first()), 8 * d, ring)
+        dot.color = T.TEXT; cv.drawCircle(sx(pts.last()), sy(pts.last()), 9 * d, dot)
+        // 케어 시작 지점: 같은 케어가 여러 번이면 이름은 처음 한 번만
+        name.color = T.ACCENT; name.textSize = T.SMALL * sp
+        val named = HashSet<Care>(); val taken = ArrayList<RectF>()
+        for ((i, care) in route.marks) {
+            val p = pts.getOrNull(i) ?: continue
+            val x = sx(p); val y = sy(p); val rad = 16 * d
+            dot.color = T.ACCENT; cv.drawCircle(x, y, rad, dot)
+            icon(care).apply { val s = (11 * d).toInt(); setBounds((x - s).toInt(), (y - s).toInt(), (x + s).toInt(), (y + s).toInt()); draw(cv) }
+            if (!named.add(care)) continue
+            val label = careName(care); val w = name.measureText(label)
+            var lx = x + rad + 8 * d; if (lx + w > width - 8 * d) lx = x - rad - 8 * d - w
+            val box = RectF(lx, y - 14 * d, lx + w, y + 10 * d)
+            while (taken.any { RectF.intersects(it, box) }) box.offset(0f, 26 * d)
+            taken += box
+            // 선 위에 겹쳐도 읽히게 바탕색 테두리를 먼저 그림
+            halo.color = T.SURFACE; halo.textSize = name.textSize; halo.typeface = name.typeface
+            cv.drawText(label, box.left, box.bottom - 4 * d, halo)
+            cv.drawText(label, box.left, box.bottom - 4 * d, name)
+        }
+    }
+
+    private fun icon(c: Care) = icons.getOrPut(c) {
+        context.getDrawable(careIcon(c))!!.mutate().apply { setTint(T.SURFACE) }
+    }
+
+    /** 아래 범례: 선 굵기·색 세 단계 + 케어 점 */
+    private fun drawLegend(cv: Canvas, base: Float) {
+        var x = 36 * d
+        for (level in Risk.entries) {
+            line.color = ink(level); line.strokeWidth = width(level)
+            cv.drawLine(x, base - 6 * d, x + 28 * d, base - 6 * d, line)
+            x += 38 * d
+            val s = riskName(level); cv.drawText(s, x, base, note); x += note.measureText(s) + 28 * d
+        }
+        dot.color = T.ACCENT; cv.drawCircle(x + 8 * d, base - 6 * d, 8 * d, dot)
+        cv.drawText("케어 시작", x + 24 * d, base, note)
+    }
+}
