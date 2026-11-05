@@ -366,19 +366,30 @@ fun Context.hero(tag: String?, title: String, sub: String?, tagColor: Int = T.AC
     if (sub != null) addView(label(T.SECTION, T.MUTED, 400, sub).apply { setPadding(0, dp(14), 0, 0) })
 }
 
-/** 타일 세로 목록 (머리말 선택) */
+/** 타일 세로 목록 (머리말 선택): 한 장의 판 위에 줄로 묶고 가는 선으로 나눈다. 카드를 여러 장 띄우지 않음 */
 fun Context.tileList(title: String?, tiles: List<View>) = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
     gravity = Gravity.CENTER_VERTICAL
-    if (title != null) addView(label(T.BODY, T.MUTED, 500, title).apply { setPadding(dp(4), 0, 0, dp(2)) })
-    tiles.forEachIndexed { i, t -> addView(t, LinearLayout.LayoutParams(-1, -2).apply { if (i > 0 || title != null) topMargin = dp(14) }) }
+    if (title != null) addView(label(T.BODY, T.MUTED, 500, title).apply { setPadding(dp(4), 0, 0, dp(14)) })
+    addView(LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = fill(T.SURFACE, dp(T.RADIUS).toFloat())
+        clipToOutline = true   // 눌림 색이 둥근 모서리 밖으로 안 나가게
+        // 구분선은 글자 시작선에 맞춤 (표시등 4 + 20 + 아이콘 36 + 18). 숨긴 줄 앞뒤로는 선이 겹치지 않음
+        dividerDrawable = android.graphics.drawable.InsetDrawable(GradientDrawable().apply { setColor(T.RULE); setSize(1, dp(1)) }, dp(TILE_TEXT_X), 0, 0, 0)
+        showDividers = LinearLayout.SHOW_DIVIDER_MIDDLE
+        tiles.forEach { addView(it, LinearLayout.LayoutParams(-1, -2)) }
+    }, LinearLayout.LayoutParams(-1, -2))
 }
 
-/** 케어 타일: 아이콘 + 이름 + 상태 한 줄 (+ 오른쪽 뷰). 켜지면 청록 테두리와 아이콘. onClick이 있으면 눌러짐. */
+private const val TILE_TEXT_X = 4 + 20 + 36 + 18
+
+/** 케어 줄: 표시등 + 아이콘 + 이름 + 상태 한 줄 (+ 오른쪽 뷰). 켜지면 왼쪽 표시등이 청록으로 켜짐. onClick이 있으면 눌러짐. */
 fun Context.tile(iconRes: Int, name: String, sub: TextView, onClick: (() -> Unit)? = null, right: View? = null) = LinearLayout(this).apply {
     gravity = Gravity.CENTER_VERTICAL
     minimumHeight = dp(96)
-    setPadding(dp(24), dp(14), dp(if (right != null) 18 else 24), dp(14))
+    setPadding(0, dp(14), dp(if (right != null) 18 else 24), dp(14))
+    addView(View(context).apply { tag = "rail" }, LinearLayout.LayoutParams(dp(4), dp(48)).apply { marginEnd = dp(20) })
     addView(icon(iconRes, 36, T.MUTED).apply { tag = "icon" })
     addView(LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -392,8 +403,8 @@ fun Context.tile(iconRes: Int, name: String, sub: TextView, onClick: (() -> Unit
 }
 
 fun Context.tileState(t: LinearLayout, on: Boolean) {
-    t.background = if (t.isClickable) pressable(if (on) T.SURFACE else T.RAISED, T.RADIUS, if (on) T.ACCENT else 0, 2)
-        else fill(T.SURFACE, dp(T.RADIUS).toFloat(), if (on) dp(2) else 0, T.ACCENT)
+    t.background = if (t.isClickable) pressable(T.SURFACE, 0) else null
+    t.findViewWithTag<View>("rail").background = if (on) fill(T.ACCENT, dp(2).toFloat()) else null
     t.findViewWithTag<android.widget.ImageView>("icon").setColorFilter(if (on) T.ACCENT else if (t.isClickable) T.TEXT else T.FAINT)
 }
 

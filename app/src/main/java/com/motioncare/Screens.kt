@@ -60,7 +60,7 @@ fun Context.riderSelect(
             minimumHeight = tileH
             setOnLongClickListener { onDetail(p); true }
             contentDescription = "${p.name} · ${seatName(p.seat)} · 길게 누르면 기록과 설정"
-            addView(label(40f, T.TEXT, 700, p.name))
+            addView(label(T.LEAD, T.TEXT, 700, p.name))
             addView(label(T.BODY, T.MUTED, 500, seatName(p.seat)).apply { setPadding(0, dp(4), 0, 0) })
             // 그 사람이 앉는 자리를 보여 주는 작은 차 그림
             if (tall) addView(CabinView(context).apply { update(p.seat, false, false, 0L, false) },
@@ -95,7 +95,7 @@ private fun Context.startTile(iconRes: Int, title: String, sub: String, dashed: 
     }
     addView(iconBadge(iconRes, 88, if (dashed) T.ACCENT_BG else T.RAISED, if (dashed) T.ACCENT else T.TEXT), LinearLayout.LayoutParams(dp(88), dp(88)))
     addView(View(context), LinearLayout.LayoutParams(1, h - dp(88 + 64 + 110)))   // 이름이 타일 아래쪽에 오게
-    addView(label(40f, T.TEXT, 700, title))
+    addView(label(T.LEAD, T.TEXT, 700, title))
     addView(label(T.BODY, T.MUTED, 500, sub).apply { setPadding(0, dp(8), 0, 0) })
 }
 
@@ -245,7 +245,7 @@ fun Context.report(
     val right = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
-        addView(label(36f, T.TEXT, 700, "멀미는 어땠나요?"))
+        addView(label(T.TITLE, T.TEXT, 700, "멀미는 어땠나요?"))
         (0..10).chunked(4).forEach { rowVals ->
             addView(LinearLayout(context).apply {
                 for (m in 0 until 4) {

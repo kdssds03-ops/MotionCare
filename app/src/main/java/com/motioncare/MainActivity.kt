@@ -931,11 +931,9 @@ class MainActivity : Activity() {
             addView(stateWord.apply { setPadding(0, dp(10), 0, 0) })
             addView(stateCare.apply { setPadding(0, dp(14), 0, 0) })
             addView(label(T.BODY, T.MUTED, 400, "화면보다 앞쪽 창밖을 보면 덜 어지러워요").apply { setPadding(0, dp(10), 0, 0) })
-            // 흔들림 지수 한 칸: 숫자 + 단계 이름
+            // 흔들림 지수: 숫자 + 단계 이름. 판을 따로 깔지 않고 글자만
             addView(LinearLayout(context).apply {
                 gravity = Gravity.CENTER_VERTICAL
-                background = fill(T.SURFACE, dp(T.RADIUS).toFloat())
-                setPadding(dp(24), dp(16), dp(24), dp(16))
                 addView(chipValue)
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
@@ -1025,6 +1023,11 @@ class MainActivity : Activity() {
         if (sickWide != tripOn) {   // 주행 중에는 "속이 안 좋아요"가 넓게
             sickWide = tripOn
             sickBtn.layoutParams = LinearLayout.LayoutParams(if (tripOn) 0 else dp(300), -2, if (tripOn) 1f else 0f).apply { marginStart = if (tripOn) 0 else dp(T.GAP) }
+            // 주행 전에는 "주행 시작"이 주인공: 속이 안 좋아요는 옅은 주황으로 한 단계 낮춤
+            val (bg, ink) = if (tripOn) T.p.sickBg to T.p.sickText else T.WARN_BG to T.WARN
+            sickBtn.background = pressable(bg, 24)
+            sickBtn.findViewWithTag<TextView>("label").setTextColor(ink)
+            (sickBtn.getChildAt(0) as? android.widget.ImageView)?.setColorFilter(ink)
         }
         val breathLeft = ((breathUntilMs - System.currentTimeMillis()) / 1000).toInt()
         val foot = problem?.let { "차량 응답: $it" } ?: if (lastSpoken.isEmpty()) "" else "마지막 음성 · $lastSpoken"
