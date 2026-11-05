@@ -187,7 +187,7 @@ private var saveBtnState: (() -> Unit)? = null
 // --- 주행 리포트 ---
 
 /** 리포트에서 고르는 값 (화면을 다시 그려도 유지) */
-class ReportState(val trip: Trip, val harsh: Int, var misc: Int? = null, val helped: MutableSet<Care> = mutableSetOf()) {
+class ReportState(val trip: Trip, val harsh: Int, val route: RouteTrace? = null, var misc: Int? = null, val helped: MutableSet<Care> = mutableSetOf()) {
     fun final() = trip.copy(misc = misc, helped = helped.toSet())
 }
 
@@ -223,7 +223,7 @@ fun Context.report(
                 LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(36) })
         })
     }
-    // 가운데: 이번 주행에서 차가 한 일 (주행 화면과 같은 타일) + 택시 미리보기
+    // 가운데: 지나온 길 + 차가 한 일 (주행 화면과 같은 줄 목록)
     val did = Care.entries.filter { it in t.cares }.map { c ->
         tile(careIcon(c), careName(c), label(T.SMALL, T.ACCENT, 500, careDone(c))).also { tileState(it, true) }
     }.ifEmpty { listOf(tile(R.drawable.ic_check, "케어 없이 도착", label(T.SMALL, T.MUTED, 400, "케어가 필요할 만큼 흔들리지 않았어요"))) }
@@ -235,11 +235,18 @@ fun Context.report(
         addView(label(T.BODY, T.TEXT, 500, "편안함 ${t.score} · 급한 움직임 ${r.harsh}회 · ${t.minutes}분 주행").apply { setPadding(0, dp(6), 0, dp(4)) })
         addView(label(T.SMALL, T.MUTED, 400, "기사님이 공유를 켜면 전송돼요"))
     }
+    left.addView(taxi, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(28) })
+    val route = r.route
     val center = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
-        addView(tileList("이번 주행에서 차가 한 일", did))
-        addView(taxi, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+        if (route != null) {
+            addView(label(T.BODY, T.MUTED, 500, "이번 주행에서 지나온 길").apply { setPadding(dp(4), 0, 0, dp(14)) })
+            addView(RouteView(context, route).apply { background = fill(T.SURFACE, dp(T.RADIUS).toFloat()) },
+                LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(label(T.SMALL, T.FAINT, 400, "차량 속도와 진행 방향으로 그린 모양이에요 · 지도가 아니에요").apply { setPadding(dp(4), dp(10), 0, 0) })
+            addView(tileList("차가 한 일", did), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+        } else addView(tileList("이번 주행에서 차가 한 일", did))
     }
     // 오른쪽: 멀미 응답 0~10 큰 숫자 버튼 + 도움이 된 케어
     val right = LinearLayout(this).apply {

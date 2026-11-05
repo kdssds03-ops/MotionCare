@@ -452,6 +452,7 @@ class MainActivity : Activity() {
             curSpeed = t?.speed ?: liveSpeed
             val r = comfort.update(curSpeed, t?.heading ?: liveHeading, DT, if (t == null) liveSteer else null)
             trace.push(comfort.windowMsdv * comfort.sensitivity)
+            route.add(curSpeed, t?.heading ?: liveHeading, DT, r)
             if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR)) airCare()
             breathStoppedByUser = keepUserStop(r, breathStoppedByUser)
             if (autoStartBreath(r, risk, breathStoppedByUser) && careOn(Care.BREATH)) breathing()
@@ -479,6 +480,7 @@ class MainActivity : Activity() {
         caresThisTrip += Care.AIR
         airAt = comfort.durationS
         trace.mark("공기 케어")
+        if (tripOn) route.mark(Care.AIR)
         val hvac = vehicle.getHVAC()
         powerAreas.forEach { hvac.setHvacPower(it, true, onFailed = ::fail) }
         // ponytail: 전원 켜짐 콜백을 기다리지 않고 0.5초 뒤 설정. 실차에서 실패가 보이면 onComplete로 연결.
@@ -529,7 +531,7 @@ class MainActivity : Activity() {
         val now = System.currentTimeMillis()
         breathStartMs = now
         breathUntilMs = now + BREATH_MIN_MS
-        if (tripOn) trace.mark("호흡 가이드")
+        if (tripOn) { trace.mark("호흡 가이드"); route.mark(Care.BREATH) }
         breathStoppedByUser = false
         ui.removeCallbacksAndMessages(BREATH_TOKEN)   // 이전 박자 예약이 남아 있으면 겹치지 않게
         ui.postDelayed(breathStep, BREATH_TOKEN, 0)
@@ -603,6 +605,7 @@ class MainActivity : Activity() {
         val seat = vehicle.getSeat()
         val area = careSeatArea()
         caresThisTrip += Care.RECLINE
+        if (tripOn) route.mark(Care.RECLINE)
         seat.moveSeatBackrestAngle(area, MoveControl.BACKWARD,
             onComplete = { _, _ -> reclined = true; ui.post { render() } }, onFailed = ::fail)
         ui.postDelayed({ seat.moveSeatBackrestAngle(area, MoveControl.STOP, onFailed = ::fail) }, RECLINE_MS)
@@ -774,6 +777,7 @@ class MainActivity : Activity() {
         tripOn = true; tripEnded = false
         tripStartMs = System.currentTimeMillis()
         resetTripState()
+        route = RouteTrace()
         render()
     }
 
@@ -795,7 +799,7 @@ class MainActivity : Activity() {
         val trip = Trip(tripStartMs, tripMinutes(comfort.durationS), comfort.score(), comfort.maxRisk,
             null, caresThisTrip.toSet(), emptySet(), demo = demo != null)
         demo = null
-        report = ReportState(trip, comfort.harshEvents)
+        report = ReportState(trip, comfort.harshEvents, route)
         // 주행이 끝날 때 차가 서 있으면: 주행 중 쌓인 운전자 코칭을 종료 안내에 붙여 한 번에 (달리는 중이면 말하지 않음)
         stopBreathing()   // 리포트 화면에서 박자 소리가 계속 나지 않게
         // 데모는 가상 주행이라 실제 차는 서 있음 → 실제 속도 기준은 실주행에만
@@ -818,6 +822,8 @@ class MainActivity : Activity() {
 
     // 그래프 뷰는 화면에 보이지 않지만, 최근 3분 값으로 "나아지고 있어요"를 판단하고 케어 시점을 표시함
     private val trace by lazy { TraceView(this) }
+    /** 이번 주행에서 지나온 길 (리포트에 그림). 앱이 강제로 꺼졌다 이어지면 이어진 뒤부터 */
+    private var route = RouteTrace()
     private lateinit var statusV: TextView
     private lateinit var scope: TextView
     private var backBtn: View? = null

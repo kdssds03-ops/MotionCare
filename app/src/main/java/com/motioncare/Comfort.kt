@@ -208,6 +208,9 @@ private fun windingDrive(dt: Double, base: Double, amp: Double, wob: Double): Li
             else -> (base + wob * sin(2 * PI * 350 / 20)) * (380 - t) / 30
         }
         var signal = 0
+        // 산을 돌아가는 큰 굽이: 4분 주기의 아주 느린 방향 변화라 멀미 필터(0.03Hz 이상)에는 거의 안 걸리고
+        // 좌우 가속도도 약 0.2m/s²만 더함. 리포트에 그린 길이 실제 산길처럼 굽어 보이게.
+        if (t in 25.0..350.0) heading += Math.toDegrees(BEND_YAW * sin(2 * PI * (t - 25) / BEND_PERIOD_S)) * dt
         if (t in 40.0..340.0) {   // 10초마다 좌우로 이어지는 굽은 길
             heading += Math.toDegrees(amp * 2 * PI / 10 * kotlin.math.cos(2 * PI * (t - 40) / 10)) * dt
             if ((t - 40) % 40 < 1.5) signal = if (((t - 40) / 40).toInt() % 2 == 0) -1 else 1
@@ -248,3 +251,6 @@ private fun cityDrive(dt: Double, speedK: Double, stopGo: Double, period: Double
 /** 주행 화면 "나아지고 있어요": 주의 단계에서 20초 전보다 10% 넘게 내려갔을 때만 (가다 서다의 잠깐 떨어짐은 제외) */
 fun isEasing(nowIdx: Double, idx20sAgo: Double, risk: Risk): Boolean =
     risk == Risk.CAUTION && nowIdx < idx20sAgo * 0.9
+
+private const val BEND_YAW = 0.015          // rad/s, 굽은 산길의 큰 굽이 최대 회전 속도
+private const val BEND_PERIOD_S = 240.0
