@@ -78,7 +78,7 @@ fun tripMinutes(durationS: Double) = (durationS / 60).toInt()
 /** 사용자가 직접 끔. 기록은 그대로 둔다. */
 fun Profile.disableCare(c: Care): Profile = copy(cares = cares + (c to (cares[c] ?: CareStat()).copy(off = true)))
 
-fun careName(c: Care) = when (c) { Care.AIR -> "공기 케어"; Care.BREATH -> "호흡 가이드"; Care.TURN_CUE -> "회전 예고"; Care.RECLINE -> "등받이" }
+fun careName(c: Care) = when (c) { Care.AIR -> "공기 케어"; Care.BREATH -> "호흡 가이드"; Care.TURN_CUE -> "회전 예고"; Care.RECLINE -> "등받이 젖히기" }
 
 /** 리포트의 학습 결과 한 줄: 경고 시점 변화 + 새로 꺼진 케어 */
 fun learningLine(before: Profile, after: Profile): String {

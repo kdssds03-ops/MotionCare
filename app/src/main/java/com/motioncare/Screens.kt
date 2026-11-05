@@ -268,17 +268,21 @@ fun Context.report(
         })
         if (t.cares.isNotEmpty()) {
             addView(label(T.BODY, T.MUTED, 500, "도움이 된 케어 (선택)").apply { setPadding(0, dp(24), 0, dp(10)) })
-            addView(LinearLayout(context).apply {
-                Care.entries.filter { it in t.cares }.forEachIndexed { i, c ->
-                    val on = c in r.helped
-                    addView(label(T.BODY, if (on) T.ACCENT else T.TEXT, if (on) 600 else 400, careName(c)).apply {
-                        gravity = Gravity.CENTER; minHeight = dp(T.TOUCH); setPadding(dp(24), 0, dp(24), 0)
-                        background = pressable(if (on) T.ACCENT_BG else T.RAISED, 999)
-                        isClickable = true; setOnClickListener { if (!r.helped.remove(c)) r.helped += c; onChange() }
-                        contentDescription = careName(c) + if (on) " · 선택됨" else ""
-                    }, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = dp(12) })
-                }
-            })
+            // 케어 4개가 한 줄이면 오른쪽 칸을 넘으므로 4개일 때는 2개씩 두 줄
+            val done = Care.entries.filter { it in t.cares }
+            done.chunked(if (done.size > 3) 2 else 3).forEachIndexed { rowI, rowCares ->
+                addView(LinearLayout(context).apply {
+                    rowCares.forEachIndexed { i, c ->
+                        val on = c in r.helped
+                        addView(label(T.BODY, if (on) T.ACCENT else T.TEXT, if (on) 600 else 400, careName(c)).apply {
+                            gravity = Gravity.CENTER; minHeight = dp(T.TOUCH); setPadding(dp(24), 0, dp(24), 0)
+                            background = pressable(if (on) T.ACCENT_BG else T.RAISED, 999)
+                            isClickable = true; setOnClickListener { if (!r.helped.remove(c)) r.helped += c; onChange() }
+                            contentDescription = careName(c) + if (on) " · 선택됨" else ""
+                        }, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = dp(12) })
+                    }
+                }, LinearLayout.LayoutParams(-2, -2).apply { if (rowI > 0) topMargin = dp(12) })
+            }
         }
         val line = when {
             !worthKeeping(t) -> "1분 미만 주행은 기록하지 않아요"
