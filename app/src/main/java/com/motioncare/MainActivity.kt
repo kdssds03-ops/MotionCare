@@ -89,6 +89,7 @@ class MainActivity : Activity() {
     private var report: ReportState? = null
     private var lastSignal = 0
     private val coachQ = CoachQueue()
+    private val autoTrip = AutoTrip()
 
     // 공조는 기능마다 지원 구역이 달라서 따로 저장
     private var powerAreas: List<SeatArea> = emptyList()
@@ -443,6 +444,7 @@ class MainActivity : Activity() {
     // 0.5초마다 위험 지수 갱신. 데모 중에는 4배속(0.125초마다)으로 가상 주행을 재생.
     private val tick = object : Runnable {
         override fun run() {
+            if (demo == null) autoStartEnd()   // 데모는 가상 주행이라 실제 차 상태로 시작·종료하지 않음
             if (!tripOn) { if (visible) render(); ui.postDelayed(this, 500); return }
             val d = demo
             val t = d?.takeIf { it.hasNext() }?.next()
@@ -768,6 +770,21 @@ class MainActivity : Activity() {
         dlg.show()
     }
 
+    /**
+     * 버튼 없이: 탑승자를 고른 주행 화면에서 차가 출발하면 시작, P단에 3분 서 있으면 종료.
+     * 리포트를 보는 중(tripEnded)에는 새 주행을 시작하지 않음.
+     */
+    private fun autoStartEnd() {
+        when (autoTrip.update(DT, liveSpeed, parked, tripOn)) {
+            AutoTripAction.START -> if (!tripOn && !tripEnded && screen == Screen.Drive) {
+                startTrip(false)
+                say("출발했네요. 멀미 케어를 시작할게요")
+            }
+            AutoTripAction.END -> if (tripOn) endTrip()
+            AutoTripAction.NONE -> {}
+        }
+    }
+
     private fun startTrip(withDemo: Boolean, course: DemoCourse = DemoCourse.CITY) {
         comfort = Comfort(comfort.sensitivity)
         risk = Risk.LOW
@@ -1019,7 +1036,7 @@ class MainActivity : Activity() {
         val sec = comfort.durationS.toInt()
         statusV.text = when {
             tripEnded -> "주행 종료 · 편안함 ${comfort.score()}점"
-            !tripOn -> "${seatName(seat)} · 주행 전"
+            !tripOn -> "${seatName(seat)} · 출발하면 자동 시작"
             else -> "${seatName(seat)} · 주행 중 %d:%02d".format(sec / 60, sec % 60) + (demoCourse?.let { " · 데모: ${it.title}" } ?: "")
         }
         preView.visibility = if (tripOn) View.GONE else View.VISIBLE
