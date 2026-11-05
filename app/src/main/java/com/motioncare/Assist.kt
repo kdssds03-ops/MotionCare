@@ -100,3 +100,33 @@ fun reclineTap(parked: Boolean?, reclined: Boolean, reserved: Boolean): ReclineT
 /** 예약해 둔 등받이는 P단에 들어서는 순간 한 번만 젖힌다 */
 fun reclineOnPark(wasParked: Boolean?, nowParked: Boolean?, reserved: Boolean, reclined: Boolean): Boolean =
     reserved && !reclined && nowParked == true && wasParked != true
+
+enum class AutoTripAction { START, END, NONE }
+
+/**
+ * 버튼 없이 주행 시작·종료. 차가 P단이 아닌 채로 사람이 걷는 속도보다 빠르게(2m/s) 5초 달리면 시작,
+ * P단에 3분 서 있으면 종료. 신호 대기(D단 정지)나 기어를 모를 때는 끝내지 않는다.
+ */
+class AutoTrip {
+    private var movingS = 0.0
+    private var parkedS = 0.0
+
+    fun update(dtS: Double, speedMps: Double, parked: Boolean?, tripOn: Boolean): AutoTripAction {
+        if (!tripOn) {
+            parkedS = 0.0
+            movingS = if (parked != true && speedMps >= START_SPEED_MPS) movingS + dtS else 0.0
+            if (movingS >= START_AFTER_S) { movingS = 0.0; return AutoTripAction.START }
+        } else {
+            movingS = 0.0
+            parkedS = if (parked == true && speedMps < 0.5) parkedS + dtS else 0.0
+            if (parkedS >= END_AFTER_S) { parkedS = 0.0; return AutoTripAction.END }
+        }
+        return AutoTripAction.NONE
+    }
+
+    companion object {
+        const val START_SPEED_MPS = 2.0
+        const val START_AFTER_S = 5.0
+        const val END_AFTER_S = 180.0
+    }
+}
