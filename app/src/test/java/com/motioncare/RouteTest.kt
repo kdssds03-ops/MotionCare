@@ -63,4 +63,27 @@ class RouteTest {
 
     @Test fun windingDemoLooksWinding() = assertTrue("spread ${spread(DemoCourse.WINDING)}", spread(DemoCourse.WINDING) >= 0.25)
 
+    @Test fun timelineKeepsTimeLevelsAndCareTimes() {
+        val r = RouteTrace()
+        repeat(40) { r.add(10.0, 0.0, 0.5, Risk.LOW, 2.0) }       // 20초 편안
+        r.mark(Care.AIR)
+        repeat(20) { r.add(10.0, 0.0, 0.5, Risk.HIGH, 12.0) }     // 10초 많이 흔들림
+        assertEquals(30.0, r.elapsedS, 1e-6)
+        assertEquals(20.0, r.secondsAt(Risk.LOW), 1e-6)
+        assertEquals(10.0, r.secondsAt(Risk.HIGH), 1e-6)
+        assertEquals(listOf(20.0 to Care.AIR), r.careTimes)
+        assertEquals(15, r.timeline.size)                          // 2초 칸
+        assertEquals(12.0, r.timeline.last().v, 1e-6)
+        assertEquals(Risk.HIGH, r.timeline.last().risk)
+    }
+
+    @Test fun longTimelineStaysBoundedAndKeepsPeak() {
+        val r = RouteTrace()
+        repeat(3000) { r.add(10.0, 0.0, 0.5, Risk.LOW, 1.0) }
+        r.add(10.0, 0.0, 0.5, Risk.HIGH, 20.0)                     // 순간 최고치
+        repeat(3000) { r.add(10.0, 0.0, 0.5, Risk.LOW, 1.0) }
+        assertTrue(r.timeline.size <= RouteTrace.MAX_POINTS)
+        assertEquals(20.0, r.timeline.maxOf { it.v }, 1e-6)
+        assertEquals(r.elapsedS, r.timeline.last().t, RouteTrace.STEP_S * 8)
+    }
 }

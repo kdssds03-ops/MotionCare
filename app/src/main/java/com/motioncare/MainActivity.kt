@@ -477,7 +477,7 @@ class MainActivity : Activity() {
             curSpeed = t?.speed ?: liveSpeed
             val r = comfort.update(curSpeed, t?.heading ?: liveHeading, DT, if (t == null) liveSteer else null)
             trace.push(comfort.windowMsdv * comfort.sensitivity)
-            route.add(curSpeed, t?.heading ?: liveHeading, DT, r)
+            route.add(curSpeed, t?.heading ?: liveHeading, DT, r, comfort.windowMsdv * comfort.sensitivity)
             if (r >= Risk.CAUTION && risk < Risk.CAUTION && careOn(Care.AIR) && autoAirAgain(airAt, comfort.durationS)) airCare()
             breathStoppedByUser = keepUserStop(r, breathStoppedByUser)
             if (autoStartBreath(r, risk, breathStoppedByUser) && careOn(Care.BREATH)) breathing()

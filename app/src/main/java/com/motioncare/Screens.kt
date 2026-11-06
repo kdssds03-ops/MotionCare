@@ -241,10 +241,10 @@ fun Context.report(
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
         if (route != null) {
-            addView(label(T.BODY, T.MUTED, 500, "이번 주행에서 지나온 길").apply { setPadding(dp(4), 0, 0, dp(14)) })
+            addView(label(T.BODY, T.MUTED, 500, "이번 주행 돌아보기").apply { setPadding(dp(4), 0, 0, dp(14)) })
             addView(RouteView(context, route).apply { background = fill(T.SURFACE, dp(T.RADIUS).toFloat()) },
                 LinearLayout.LayoutParams(-1, 0, 1f))
-            addView(label(T.SMALL, T.FAINT, 400, "차량 속도와 진행 방향으로 그린 모양이에요 · 지도가 아니에요").apply { setPadding(dp(4), dp(10), 0, 0) })
+            addView(label(T.SMALL, T.FAINT, 400, "길 모양은 차량 속도와 진행 방향으로 그렸어요 · 지도가 아니에요").apply { setPadding(dp(4), dp(10), 0, 0) })
             addView(tileList("차가 한 일", did), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
         } else addView(tileList("이번 주행에서 차가 한 일", did))
     }
