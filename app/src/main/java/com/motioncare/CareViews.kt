@@ -23,6 +23,12 @@ fun breathPhase(startMs: Long, now: Long): Pair<Float, Boolean> {
     return eased to inhale
 }
 
+/**
+ * 케어 그림(바람 줄, 호흡 원)을 다시 그리는 간격. 느린 움직임이라 초당 15장이면 충분하고,
+ * 매 프레임(초당 60장) 그리면 주행 중 CPU를 Pleos 목표(5%)보다 많이 쓴다.
+ */
+const val CARE_FRAME_MS = 66L
+
 private fun alpha(color: Int, a: Float) = (color and 0x00FFFFFF) or ((a.coerceIn(0f, 1f) * 255).toInt() shl 24)
 
 /**
@@ -40,6 +46,7 @@ class CabinView(c: Context) : View(c) {
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val r = RectF()
+    private val again = Runnable { invalidate() }
 
     init { contentDescription = "위에서 본 차 실내" }
 
@@ -113,7 +120,9 @@ class CabinView(c: Context) : View(c) {
             }
         }
         cv.restore()
-        if (air || breathing) postInvalidateDelayed(50)
+        // 예약은 항상 하나만: update()가 부른 invalidate마다 새 예약이 쌓이면 결국 매 프레임 그리게 된다
+        removeCallbacks(again)
+        if (air || breathing) postDelayed(again, CARE_FRAME_MS)
     }
 }
 
@@ -127,6 +136,8 @@ class BreathView(c: Context) : View(c) {
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val word = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.create(Typeface.DEFAULT, 700, false) }
     private val small = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; fontFeatureSettings = "tnum" }
+
+    private val again = Runnable { invalidate() }
 
     init { contentDescription = "호흡 가이드" }
 
@@ -147,7 +158,8 @@ class BreathView(c: Context) : View(c) {
         cv.drawText("남은 시간 %d:%02d".format(left / 60, left % 60), cx, cy + 58 * d, small)
         cv.drawText("눈은 창밖에", cx, cy + 58 * d + small.textSize * 1.4f, small)
         contentDescription = (if (inhale) "들이쉬세요" else "내쉬세요") + " · 남은 시간 ${left}초"
-        if (untilMs > now) postInvalidateOnAnimation()
+        removeCallbacks(again)
+        if (untilMs > now) postDelayed(again, CARE_FRAME_MS)
     }
 }
 
