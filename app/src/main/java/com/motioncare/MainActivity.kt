@@ -740,6 +740,7 @@ class MainActivity : Activity() {
 
     /** 가장 가까운 휴게소(직선 50km 안)를 경유지로 제안. 위치·휴게소가 없으면 한 줄 안내만. */
     fun offerRestArea(reason: String) {
+        autoOffered = true   // 이번 주행에서 이미 물었으면 위험 3분 자동 제안은 건너뜀 (사용자가 다시 누르면 다시 물음)
         val lat = lastLat; val lon = lastLon
         val hit = if (lat == null || lon == null) null else nearestRestArea(lat, lon, restAreas)
         offer = hit
