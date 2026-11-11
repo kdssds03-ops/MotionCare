@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 앱 아이콘 배경: 왼쪽 위 #12897E → 오른쪽 아래 #07504A (보이는 72dp 기준), 108dp 가장자리까지 같은 기울기로 연장 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="108" android:endY="108"
+                android:startColor="#FF15978B"
+                android:endColor="#FF04423C" />
+        </aapt:attr>
+    </path>
+</vector>
