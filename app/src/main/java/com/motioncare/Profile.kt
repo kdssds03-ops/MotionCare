@@ -23,11 +23,16 @@ data class Profile(
     val trips: List<Trip> = emptyList(),   // 최신이 맨 앞
 )
 
-/** 설문 3문항(각 0 아니요 · 1 가끔 · 2 자주) 합계 → 초기 민감도 */
-fun surveySensitivity(answers: List<Int>): Double = when (answers.sum()) {
-    in 0..1 -> 0.8
-    in 2..4 -> 1.0
-    else -> 1.3
+/**
+ * 설문 3문항(각 0 아니요 · 1 가끔 · 2 자주) 합계 → 초기 민감도.
+ * 초등학생 나이(약 7~12세)면 한 단계 더 민감하게 시작한다(상한 '높음').
+ * 근거: 멀미는 6~7세에 시작해 9~10세에 가장 심하다(Golding 2006 리뷰).
+ * 한 단계라는 크기는 설계상 선택이며, 이후 주행 후 응답(MISC)으로 다시 맞춰진다.
+ */
+fun surveySensitivity(answers: List<Int>, child: Boolean = false): Double {
+    val levels = listOf(0.8, 1.0, 1.3)
+    val i = when (answers.sum()) { in 0..1 -> 0; in 2..4 -> 1; else -> 2 }
+    return levels[minOf(i + if (child) 1 else 0, levels.lastIndex)]
 }
 
 /** 멀미했는데 위험 단계에 못 갔으면 더 일찍, 괜찮았는데 위험까지 갔으면 더 늦게 경고 */

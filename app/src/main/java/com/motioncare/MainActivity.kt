@@ -274,12 +274,12 @@ class MainActivity : Activity() {
 
     private fun saveDraft() {
         if (!draft.valid || !keyboardAllowed) { show(Screen.CreateProfile); return }
-        val fresh = Profile(java.util.UUID.randomUUID().toString(), draft.name.take(10), draft.seat!!, surveySensitivity(draft.answers.toList()))
+        val fresh = Profile(java.util.UUID.randomUUID().toString(), draft.name.take(10), draft.seat!!, surveySensitivity(draft.answers.toList(), draft.child))
         val trip = draft.trip
         val p = trip?.let { fresh.learn(it) } ?: fresh   // 게스트 주행을 저장하면 첫 기록이 됨
         profiles = profiles + p
         store.save(profiles)
-        draft.name = ""; draft.seat = null; draft.answers.fill(-1); draft.trip = null
+        draft.name = ""; draft.seat = null; draft.answers.fill(-1); draft.trip = null; draft.child = false
         if (trip != null) { report = null; tripEnded = false }
         pickRider(p)
     }

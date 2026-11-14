@@ -18,6 +18,12 @@ class ProfileTest {
         assertEquals(1.3, surveySensitivity(listOf(2, 1, 2)), 1e-9)
     }
 
+    @Test fun childStartsOneStepMoreSensitive() {
+        assertEquals(1.0, surveySensitivity(listOf(0, 0, 1), child = true), 1e-9)
+        assertEquals(1.3, surveySensitivity(listOf(1, 1, 0), child = true), 1e-9)
+        assertEquals(1.3, surveySensitivity(listOf(2, 1, 2), child = true), 1e-9)   // 이미 '높음'이면 그대로
+    }
+
     @Test fun sickWithoutHighMakesEarlier() = assertEquals(1.1, adjustSensitivity(1.0, 6, Risk.CAUTION), 1e-9)
 
     @Test fun calmButHighMakesLater() = assertEquals(0.9, adjustSensitivity(1.0, 0, Risk.HIGH), 1e-9)

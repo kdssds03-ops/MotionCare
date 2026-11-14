@@ -102,7 +102,7 @@ private fun Context.startTile(iconRes: Int, title: String, sub: String, dashed: 
 // --- 새 프로필 ---
 
 /** 프로필 만들기 입력값 (화면을 다시 그려도 유지) */
-class Draft(var name: String = "", var seat: Seat? = null, val answers: IntArray = intArrayOf(-1, -1, -1), var trip: Trip? = null) {
+class Draft(var name: String = "", var seat: Seat? = null, val answers: IntArray = intArrayOf(-1, -1, -1), var trip: Trip? = null, var child: Boolean = false) {
     val valid get() = name.isNotBlank() && seat != null && answers.all { it >= 0 }
     /** 저장 버튼 옆에 보여 줄 남은 일 (다 채웠으면 null) */
     val missing get() = when {
@@ -165,6 +165,9 @@ fun Context.createProfile(d: Draft, keyboardAllowed: Boolean, onChange: () -> Un
             addView(label(T.BODY, T.TEXT, 500, text).apply { setPadding(0, dp(24), 0, dp(10)) })
             addView(segmented(listOf("아니요", "가끔", "자주"), d.answers[q]) { v -> d.answers[q] = v; onChange() })
         }
+        // 설문과 별개: 아이는 멀미가 가장 심한 나이대라 한 단계 민감하게 시작 (기본 '아니요')
+        addView(label(T.BODY, T.TEXT, 500, "초등학생 나이(약 7~12세)인가요?").apply { setPadding(0, dp(24), 0, dp(10)) })
+        addView(segmented(listOf("아니요", "예"), if (d.child) 1 else 0) { v -> d.child = v == 1; onChange() })
     }
     val save = bigButton("저장하고 시작", 0, R.drawable.ic_check) { if (d.valid) onSave() }
     // 다 채우기 전에는 회색 버튼에 남은 일을 적어 둠 (흐리게 하면 글자가 안 읽힘)
